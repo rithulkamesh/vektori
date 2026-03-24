@@ -1,0 +1,13 @@
+{
+  "user-123": [
+    {"text": "User prefers WhatsApp over email", "session_id": "call-001"},
+    {"text": "Outstanding loan amount is ₹45,000", "session_id": "call-001"},
+    {"text": "User can pay by Friday", "session_id": "call-001"},
+    {"text": "User moved to Bangalore from Mumbai", "session_id": "call-002"},
+    {"text": "User works at Razorpay as senior software engineer", "session_id": "call-002"}
+  ],
+  "user-456": [
+    {"text": "User works night shifts", "session_id": "call-003"},
+    {"text": "User should not be called before 10am", "session_id": "call-003"}
+  ]
+}

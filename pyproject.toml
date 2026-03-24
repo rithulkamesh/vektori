@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=68", "setuptools-scm>=8"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "vektori"
+dynamic = ["version"]
+description = "Open-source, self-hostable memory engine for AI agents using a three-layer sentence graph architecture."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Laxman & Manit" }
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "spacy>=3.7",
+    "numpy>=1.24",
+    "aiosqlite>=0.19",
+    "openai>=1.12",
+    "httpx>=0.27",
+    "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+postgres = ["asyncpg>=0.29", "pgvector>=0.2"]
+anthropic = ["anthropic>=0.20", "voyageai>=0.2"]
+sentence-transformers = ["sentence-transformers>=2.6"]
+bge = ["FlagEmbedding>=1.2"]
+litellm = ["litellm>=1.30"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.9",
+    "mypy>=1.8",
+    "pre-commit>=3.6",
+]
+all = [
+    "asyncpg>=0.29",
+    "pgvector>=0.2",
+    "anthropic>=0.20",
+    "voyageai>=0.2",
+    "sentence-transformers>=2.6",
+    "FlagEmbedding>=1.2",
+    "litellm>=1.30",
+]
+
+[project.urls]
+Homepage = "https://github.com/vektori-ai/vektori"
+Repository = "https://github.com/vektori-ai/vektori"
+Issues = "https://github.com/vektori-ai/vektori/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vektori*"]
+
+[tool.setuptools_scm]
+write_to = "vektori/_version.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,29 @@
+[
+  {
+    "session_id": "call-001",
+    "user_id": "user-123",
+    "messages": [
+      {"role": "user", "content": "I only use WhatsApp, please don't email me."},
+      {"role": "assistant", "content": "Understood, I'll contact you on WhatsApp only."},
+      {"role": "user", "content": "My outstanding amount is ₹45,000 and I can pay by Friday."},
+      {"role": "assistant", "content": "Noted. I'll follow up on Friday regarding the payment."}
+    ]
+  },
+  {
+    "session_id": "call-002",
+    "user_id": "user-123",
+    "messages": [
+      {"role": "user", "content": "Actually I moved to Bangalore from Mumbai last month."},
+      {"role": "assistant", "content": "Got it, I've updated your city to Bangalore."},
+      {"role": "user", "content": "I work at Razorpay as a senior software engineer."}
+    ]
+  },
+  {
+    "session_id": "call-003",
+    "user_id": "user-456",
+    "messages": [
+      {"role": "user", "content": "Please don't call me before 10am, I work night shifts."},
+      {"role": "assistant", "content": "Understood, I'll only reach out after 10am."}
+    ]
+  }
+]
