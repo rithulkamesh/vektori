@@ -202,7 +202,7 @@ class Vektori:
             query: Natural language query.
             user_id: Whose memories to search.
             agent_id: Optional agent scoping.
-            depth: "l0" facts only | "l1" facts+insights | "l2" full story.
+            depth: "l0" facts only | "l1" facts+insights+sentences | "l2" full story with context window.
             top_k: Max facts to return.
             context_window: ±N sentences around source sentences (L2 only).
             include_superseded: Include overridden/outdated facts.
@@ -211,7 +211,7 @@ class Vektori:
             {
               "facts": [...],           # always present
               "insights": [...],        # l1 and l2
-              "sentences": [...]        # l2 only
+              "sentences": [...]        # l1 (source sentences) and l2 (expanded context)
             }
         """
         await self._ensure_initialized()
