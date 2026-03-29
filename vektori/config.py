@@ -48,7 +48,7 @@ class VektoriConfig:
 
     # Hard token limits for extraction LLM calls (API-level, not prompt hints)
     max_extraction_input_tokens: int = 4000   # truncate conversation before sending to LLM
-    max_extraction_output_tokens: int = 1024  # cap output — facts JSON is small, 1k is plenty
+    max_extraction_output_tokens: int = 8192  # headroom for dense sessions that ignore max_facts limit
 
     # Retrieval gate — cheap heuristic, no LLM, runs before any DB query
     enable_retrieval_gate: bool = True

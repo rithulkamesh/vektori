@@ -58,4 +58,6 @@ CODEBASE_MAP.md
 .claude/settings.local.json
 benchmark_results/longmemeval_s_run_full_results.json
 benchmark_results/longmemeval_s_run_summary.json
+benchmark_results/.cache/
+og_benchmark_results/
 data/longmemeval_s_cleaned.json

@@ -55,6 +55,7 @@ class IngestionPipeline:
         agent_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         session_time: datetime | None = None,
+        skip_extraction: bool = False,
     ) -> dict[str, Any]:
         """
         Ingest a conversation session.
@@ -109,7 +110,9 @@ class IngestionPipeline:
         await self.db.upsert_session(session_id, user_id, agent_id, metadata or {}, started_at=session_time)
 
         # 6. Trigger extraction
-        if self.worker is not None:
+        if skip_extraction:
+            extraction_status = "skipped"
+        elif self.worker is not None:
             self.worker.schedule(ExtractionRequest(
                 messages=messages,
                 session_id=session_id,

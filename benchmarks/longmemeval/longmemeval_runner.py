@@ -1,22 +1,48 @@
 """
 LongMemEval Benchmark Runner for Vektori
+=========================================
 
-End-to-end evaluation of Vektori's long-term memory capabilities using LongMemEval.
-Tests five core abilities: Information Extraction, Multi-Session Reasoning, 
-Knowledge Updates, Temporal Reasoning, and Abstention.
+End-to-end evaluation of Vektori's long-term memory on LongMemEval.
+
+Ingestion strategy
+------------------
+Approach 2 with session-level extract cache:
+
+* **Per-question isolation** — each question gets its own ``user_id``
+  (``bq_<question_id>``).  After answering, ``delete_user()`` wipes all
+  rows so the next question starts clean.  This prevents content-hash
+  collisions from shared haystack sessions.
+
+* **Session extract cache** — LLM fact-extraction is the expensive step
+  (costs money).  Results are cached on disk keyed by ``haystack_session_id``.
+  Shared sessions (~20 % of the dataset) are extracted once; replayed from
+  cache for every other question that uses them.  Re-embedding on replay is
+  cheap (local sentence-transformers).
+
+Checkpointing
+-------------
+Progress is saved to ``<output_dir>/<run_name>_checkpoint.json`` after every
+completed question.  Re-running with the same ``--run-name`` (or same dataset
+default name) automatically skips already-finished questions and resumes from
+the first unfinished one.
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-# Configure logging
+from benchmarks.longmemeval.checkpoint import BenchmarkCheckpoint
+from benchmarks.longmemeval.session_cache import SessionExtractCache
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -24,86 +50,76 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ── Config ────────────────────────────────────────────────────────────────────
+
 @dataclass
 class BenchmarkConfig:
-    """Configuration for LongMemEval benchmark run."""
+    """Configuration for a LongMemEval benchmark run."""
 
-    # LongMemEval data paths
+    # Dataset
     data_dir: str = "data"
-    dataset_name: str = "longmemeval_s_cleaned"  # s|m|oracle
-    
-    # Vektori configuration
+    dataset_name: str = "longmemeval_s_cleaned"  # s | m | oracle
+
+    # Vektori
     storage_backend: str = "sqlite"
     database_url: str | None = None
-    embedding_model: str = "sentence-transformers:BAAI/bge-m3"  # BGE-M3 via sentence-transformers (local, 1024-dim)
+    embedding_model: str = "sentence-transformers:BAAI/bge-m3"
     extraction_model: str = "gemini:gemini-2.5-flash-lite"
-    
-    # Retrieval configuration
-    retrieval_depth: str = "l1"  # l0|l1|l2
+
+    # Retrieval
+    retrieval_depth: str = "l1"   # l0 | l1 | l2
     top_k: int = 10
     context_window: int = 3
-    
+
     # Processing
     batch_size: int = 8
     max_workers: int = 4
 
-    # Output configuration
+    # Output
     output_dir: str = "benchmark_results"
     run_name: str | None = None
 
     # Evaluation
-    eval_api_key: str | None = None
     eval_model: str = "gemini:gemini-2.5-flash-lite"
 
 
+# ── Runner ────────────────────────────────────────────────────────────────────
+
 class LongMemEvalBenchmark:
-    """Main benchmark runner for Vektori on LongMemEval."""
-    
-    def __init__(self, config: BenchmarkConfig):
+    """Main benchmark runner."""
+
+    def __init__(self, config: BenchmarkConfig) -> None:
         self.config = config
         self.output_dir = Path(config.output_dir)
-        self.output_dir.mkdir(exist_ok=True)
-        
-        # Initialize Vektori client (lazy initialization)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
         self.vektori_client = None
         self.storage = None
-        
-        # Dataset loading
-        self.dataset = None
-        self.dataset_path = None
-        
-        # Results tracking
-        self.results = {
-            "config": config.__dict__,
-            "ingestion_results": None,
-            "retrieval_results": None,
-            "qa_results": None,
-            "metrics": None,
-        }
-    
+        self.dataset: list[dict[str, Any]] = []
+        self.dataset_path: Path | None = None
+
+        self._session_cache: SessionExtractCache | None = None
+        self._checkpoint: BenchmarkCheckpoint | None = None
+
+    # ── Setup ────────────────────────────────────────────────────────────────
+
     async def setup(self) -> None:
-        """Initialize Vektori client and download/load dataset."""
-        logger.info("Setting up benchmark environment...")
-        
-        # Initialize Vektori
+        logger.info("Setting up benchmark environment…")
         await self._init_vektori()
-        
-        # Load or download LongMemEval dataset
         await self._load_dataset()
-        
-        logger.info("Benchmark setup complete")
-    
+        await self._init_session_cache()
+        self._init_checkpoint()
+        logger.info("Setup complete — %d questions in dataset", len(self.dataset))
+
     async def _init_vektori(self) -> None:
-        """Initialize Vektori client."""
         from vektori import Vektori
-        
+
         logger.info(
-            "Initializing Vektori with backend=%s, embedding_model=%s, extraction_model=%s",
+            "Initialising Vektori (backend=%s, embedding=%s, extraction=%s)",
             self.config.storage_backend,
             self.config.embedding_model,
             self.config.extraction_model,
         )
-        
         self.vektori_client = Vektori(
             database_url=self.config.database_url,
             storage_backend=self.config.storage_backend,
@@ -111,451 +127,443 @@ class LongMemEvalBenchmark:
             extraction_model=self.config.extraction_model,
             default_top_k=self.config.top_k,
             context_window=self.config.context_window,
-            async_extraction=False,
+            async_extraction=False,   # benchmark needs sync so we can interleave cache ops
         )
-        
         await self.vektori_client._ensure_initialized()
         self.storage = self.vektori_client.db
-    
+
     async def _load_dataset(self) -> None:
-        """Load LongMemEval dataset from local path or download."""
-        dataset_filename = f"{self.config.dataset_name}.json"
-        self.dataset_path = Path(self.config.data_dir) / dataset_filename
-        
+        filename = f"{self.config.dataset_name}.json"
+        self.dataset_path = Path(self.config.data_dir) / filename
+
         if not self.dataset_path.exists():
-            logger.warning(
-                "Dataset not found at %s. Attempting download...",
-                self.dataset_path,
-            )
-            await self._download_dataset(dataset_filename)
-        
+            logger.warning("Dataset not found at %s — attempting download…", self.dataset_path)
+            await self._download_dataset(filename)
+
         logger.info("Loading dataset from %s", self.dataset_path)
         with open(self.dataset_path, encoding="utf-8") as f:
             self.dataset = json.load(f)
-        
         logger.info("Loaded %d test instances", len(self.dataset))
-    
+
     async def _download_dataset(self, filename: str) -> None:
-        """Download dataset from Hugging Face."""
         hf_base = "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main"
         url = f"{hf_base}/{filename}"
-        
-        logger.info("Downloading %s from %s", filename, url)
-        
+        logger.info("Downloading %s …", url)
         self.dataset_path.parent.mkdir(parents=True, exist_ok=True)
-        
         async with httpx.AsyncClient(timeout=600.0, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
-            
             with open(self.dataset_path, "wb") as f:
                 f.write(response.content)
-        
-        logger.info("Dataset downloaded to %s", self.dataset_path)
-    
-    async def ingest_histories(self) -> None:
-        """Ingest all chat histories from LongMemEval into Vektori."""
-        logger.info("Starting history ingestion for %d instances...", len(self.dataset))
-        
-        ingestion_results = {
-            "total": len(self.dataset),
-            "successful": 0,
-            "failed": 0,
-            "errors": [],
-        }
-        
-        for idx, instance in enumerate(self.dataset):
-            try:
-                question_id = instance["question_id"]
-                haystack_sessions = instance["haystack_sessions"]
-                haystack_dates = instance["haystack_dates"]
-                
-                # Flatten sessions and dates for ingestion
-                all_messages = []
-                for session_idx, session in enumerate(haystack_sessions):
-                    all_messages.extend(session)
-                
-                # Ingest with user_id = question_id to keep separate memory contexts
-                await self.vektori_client.add(
-                    messages=all_messages,
-                    session_id=question_id,
-                    user_id=question_id,
-                    metadata={"timestamp": haystack_dates[-1]} if haystack_dates else None,
-                )
-                
-                ingestion_results["successful"] += 1
-                
-                if (idx + 1) % 50 == 0:
-                    logger.info("Ingested %d/%d histories", idx + 1, len(self.dataset))
-                    
-            except Exception as e:
-                logger.error("Failed to ingest %s: %s", question_id, str(e))
-                ingestion_results["failed"] += 1
-                ingestion_results["errors"].append({
-                    "question_id": question_id,
-                    "error": str(e),
-                })
-        
-        self.results["ingestion_results"] = ingestion_results
-        logger.info(
-            "Ingestion complete: %d successful, %d failed",
-            ingestion_results["successful"],
-            ingestion_results["failed"],
-        )
-    
-    async def retrieve_and_answer(self) -> None:
-        """Retrieve relevant context for each question and generate answers."""
-        logger.info("Starting retrieval and QA generation...")
-        
-        qa_results = []
-        retrieval_results = {
-            "total": 0,
-            "successful": 0,
-            "failed": 0,
-        }
-        
-        for idx, instance in enumerate(self.dataset):
-            try:
-                question_id = instance["question_id"]
-                question = instance["question"]
-                expected_answer = instance["answer"]
-                question_type = instance["question_type"]
-                
-                # Search for relevant context
-                search_results = await self.vektori_client.search(
-                    query=question,
-                    user_id=question_id,
-                    depth=self.config.retrieval_depth,
-                )
-                
-                # Extract retrieved context
-                retrieved_context = self._format_retrieved_context(search_results)
-                
-                # Generate answer using context
-                generated_answer = await self._generate_answer(
-                    question=question,
-                    context=retrieved_context,
-                    question_type=question_type,
-                )
-                
-                qa_result = {
-                    "question_id": question_id,
-                    "question": question,
-                    "question_type": question_type,
-                    "hypothesis": generated_answer,
-                    "expected_answer": expected_answer,
-                    "retrieved_context": retrieved_context,
-                    "retrieval_depth": self.config.retrieval_depth,
-                }
-                
-                qa_results.append(qa_result)
-                retrieval_results["successful"] += 1
-                retrieval_results["total"] += 1
-                
-                if (idx + 1) % 50 == 0:
-                    logger.info("Processed %d/%d questions", idx + 1, len(self.dataset))
-                    
-            except Exception as e:
-                logger.error("Failed to process question %s: %s", question_id, str(e))
-                retrieval_results["failed"] += 1
-                retrieval_results["total"] += 1
-        
-        self.results["qa_results"] = qa_results
-        self.results["retrieval_results"] = retrieval_results
-        logger.info(
-            "QA generation complete: %d successful, %d failed",
-            retrieval_results["successful"],
-            retrieval_results["failed"],
-        )
-    
-    def _format_retrieved_context(self, search_results: Any) -> str:
-        """Format retrieved search results into readable context."""
-        if not search_results or "results" not in search_results:
-            return "No relevant context retrieved."
-        
-        context_lines = []
-        
-        # Add facts (L0)
-        if "l0" in search_results["results"]:
-            context_lines.append("## Facts")
-            for i, fact in enumerate(search_results["results"]["l0"], 1):
-                content = fact.get("content", fact.get("text", str(fact)))
-                context_lines.append(f"{i}. {content}")
-        
-        # Add insights (L1)
-        if "l1" in search_results["results"]:
-            context_lines.append("\n## Insights")
-            for i, insight in enumerate(search_results["results"]["l1"], 1):
-                content = insight.get("content", insight.get("text", str(insight)))
-                context_lines.append(f"{i}. {content}")
-        
-        # Add sentences with context (L2)
-        if "l2" in search_results["results"]:
-            context_lines.append("\n## Session Context")
-            for i, sent in enumerate(search_results["results"]["l2"], 1):
-                content = sent.get("content", sent.get("text", str(sent)))
-                context_lines.append(f"{i}. {content}")
-        
-        return "\n".join(context_lines) if context_lines else "No relevant context retrieved."
-    
-    async def _generate_answer(
-        self,
-        question: str,
-        context: str,
-        question_type: str,
-    ) -> str:
-        """Generate answer using retrieved context."""
-        from vektori.models.factory import create_llm
-        
-        if not context or "No relevant context" in context:
-            return "I don't have relevant information to answer this question."
-        
-        # Create LLM for answer generation
-        llm = create_llm(self.config.extraction_model)
-        
-        prompt = self._build_qa_prompt(question, context, question_type)
-        
+        logger.info("Dataset saved to %s", self.dataset_path)
+
+    async def _init_session_cache(self) -> None:
+        cache_path = self.output_dir / ".cache" / "session_extract_cache.db"
+        self._session_cache = SessionExtractCache(cache_path)
+        await self._session_cache.initialize()
+
+    def _init_checkpoint(self) -> None:
+        run_name = self.config.run_name or self.config.dataset_name
+        chk_path = self.output_dir / f"{run_name}_checkpoint.json"
+        self._checkpoint = BenchmarkCheckpoint(chk_path)
+        n_done = self._checkpoint.load()
+        remaining = len(self.dataset) - n_done
+        if n_done:
+            logger.info("Resuming — %d done, %d remaining", n_done, remaining)
+
+    # ── Main loop ────────────────────────────────────────────────────────────
+
+    async def run(self) -> None:
         try:
-            response = await llm.generate(prompt, max_tokens=500)
-            return response.strip()
+            await self.setup()
+            await self._run_questions()
+            await self.evaluate()
+            await self.save_results()
+            logger.info("Benchmark complete!")
+            self._print_summary()
+        finally:
+            await self.cleanup()
+
+    async def _run_questions(self) -> None:
+        total = len(self.dataset)
+        for idx, instance in enumerate(self.dataset):
+            qid = instance["question_id"]
+
+            if self._checkpoint.is_done(qid):
+                continue
+
+            user_id = f"bq_{qid}"
+            try:
+                await self._ingest_question(instance, user_id)
+                result = await self._answer_question(instance, user_id)
+                self._checkpoint.mark_done(qid, result)
+                self._checkpoint.save()
+
+                done = self._checkpoint.n_completed
+                if done % 10 == 0 or done == total:
+                    logger.info(
+                        "Progress: %d/%d questions answered (cache: %d sessions)",
+                        done, total, await self._session_cache.count(),
+                    )
+
+            except Exception as e:
+                logger.error("Question %s failed: %s", qid, e, exc_info=True)
+                self._checkpoint.mark_failed(qid, str(e))
+                self._checkpoint.save()
+            finally:
+                # Always wipe this question's memory so the next one starts clean.
+                try:
+                    await self.vektori_client.delete_user(user_id)
+                except Exception as e:
+                    logger.warning("delete_user(%s) failed: %s", user_id, e)
+
+    # ── Per-question ingestion ────────────────────────────────────────────────
+
+    async def _ingest_question(self, instance: dict[str, Any], user_id: str) -> None:
+        """Ingest all haystack sessions for one question.
+
+        Cache hit  → replay pre-extracted facts (no LLM, only local re-embed).
+        Cache miss → full LLM extraction, then write to cache.
+
+        After all sessions are loaded, one cross-session insight pass is run
+        over the question's complete memory space.
+        """
+        haystack_sessions = instance["haystack_sessions"]
+        haystack_sids = instance["haystack_session_ids"]
+        haystack_dates = instance.get("haystack_dates") or []
+
+        for i, (session, hsid) in enumerate(zip(haystack_sessions, haystack_sids)):
+            session_date = haystack_dates[i] if i < len(haystack_dates) else None
+            session_time = _parse_date(session_date) if session_date else None
+
+            cached_facts = await self._session_cache.get(hsid)
+            if cached_facts is not None:
+                await self._replay_session(session, hsid, user_id, session_time, session_date, cached_facts)
+            else:
+                new_facts = await self._full_ingest_session(
+                    session, hsid, user_id, session_time, session_date
+                )
+                if new_facts:  # don't cache failed/empty extractions — allow retry on next run
+                    await self._session_cache.put(hsid, new_facts)
+
+        # One cross-session insight pass over the full question haystack.
+        try:
+            await self.vektori_client.generate_insights(user_id=user_id)
         except Exception as e:
-            logger.warning("Failed to generate answer: %s", str(e))
-            return "Unable to generate answer due to API error."
-    
-    def _build_qa_prompt(
+            logger.warning("Insight generation failed for user %s: %s", user_id, e)
+
+    async def _replay_session(
         self,
-        question: str,
-        context: str,
-        question_type: str,
-    ) -> str:
-        """Build prompt for QA generation."""
+        session: list[dict[str, str]],
+        haystack_sid: str,
+        user_id: str,
+        session_time: datetime | None,
+        session_date: str | None,
+        cached_facts: list[dict[str, Any]],
+    ) -> None:
+        """Cache hit path: store sentences locally, insert pre-extracted facts."""
+        pipeline = self.vektori_client._pipeline
+        extractor = self.vektori_client._extractor
+
+        await pipeline.ingest(
+            messages=session,
+            session_id=haystack_sid,
+            user_id=user_id,
+            metadata={"timestamp": session_date} if session_date else None,
+            session_time=session_time,
+            skip_extraction=True,
+        )
+
+        await extractor.replay_facts(
+            cached_facts=cached_facts,
+            session_id=haystack_sid,
+            user_id=user_id,
+            session_time=session_time,
+        )
+
+    async def _full_ingest_session(
+        self,
+        session: list[dict[str, str]],
+        haystack_sid: str,
+        user_id: str,
+        session_time: datetime | None,
+        session_date: str | None,
+    ) -> list[dict[str, Any]]:
+        """Cache miss path: full LLM extraction.  Returns cacheable facts."""
+        pipeline = self.vektori_client._pipeline
+        extractor = self.vektori_client._extractor
+
+        # Sentences first (sync path, fast, no LLM).
+        await pipeline.ingest(
+            messages=session,
+            session_id=haystack_sid,
+            user_id=user_id,
+            metadata={"timestamp": session_date} if session_date else None,
+            session_time=session_time,
+            skip_extraction=True,
+        )
+
+        # LLM fact extraction — capture results for the cache.
+        captured_facts: list[dict[str, Any]] = []
+        await extractor.extract(
+            messages=session,
+            session_id=haystack_sid,
+            user_id=user_id,
+            session_time=session_time,
+            _capture_out=captured_facts,
+            _skip_cross_session=True,   # insights generated once after all sessions load
+        )
+
+        return captured_facts
+
+    # ── Retrieval + QA ────────────────────────────────────────────────────────
+
+    async def _answer_question(
+        self, instance: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
+        qid = instance["question_id"]
+        question = instance["question"]
+        question_type = instance["question_type"]
+
+        search_results = await self.vektori_client.search(
+            query=question,
+            user_id=user_id,
+            depth=self.config.retrieval_depth,
+        )
+
+        context = self._format_retrieved_context(search_results)
+        answer = await self._generate_answer(question, context, question_type)
+
+        return {
+            "question_id": qid,
+            "question": question,
+            "question_type": question_type,
+            "hypothesis": answer,
+            "expected_answer": instance["answer"],
+            "retrieved_context": context,
+            "retrieval_depth": self.config.retrieval_depth,
+        }
+
+    def _format_retrieved_context(self, search_results: Any) -> str:
+        if not search_results:
+            return "No relevant context retrieved."
+
+        lines: list[str] = []
+
+        facts = search_results.get("facts") or []
+        if facts:
+            lines.append("## Facts")
+            for i, fact in enumerate(facts, 1):
+                lines.append(f"{i}. {fact.get('text', str(fact))}")
+
+        insights = search_results.get("insights") or []
+        if insights:
+            lines.append("\n## Insights")
+            for i, ins in enumerate(insights, 1):
+                lines.append(f"{i}. {ins.get('text', str(ins))}")
+
+        sentences = search_results.get("sentences") or []
+        if sentences:
+            lines.append("\n## Session Context")
+            for i, sent in enumerate(sentences, 1):
+                lines.append(f"{i}. {sent.get('text', str(sent))}")
+
+        return "\n".join(lines) if lines else "No relevant context retrieved."
+
+    async def _generate_answer(self, question: str, context: str, question_type: str) -> str:
+        from vektori.models.factory import create_llm
+
+        if "No relevant context" in context:
+            return "I don't have relevant information to answer this question."
+
+        llm = create_llm(self.config.eval_model)
+        prompt = self._build_qa_prompt(question, context, question_type)
+        try:
+            return (await llm.generate(prompt, max_tokens=500)).strip()
+        except Exception as e:
+            logger.warning("Answer generation failed: %s", e)
+            return "Unable to generate answer due to API error."
+
+    def _build_qa_prompt(self, question: str, context: str, question_type: str) -> str:
         abstention_hint = ""
         if question_type.endswith("_abs"):
             abstention_hint = (
-                "\nNote: This question may be testing abstention (refusing to answer "
-                "non-existent events). If the context doesn't contain relevant "
-                "information, you should abstain or indicate the information is not available."
+                "\nNote: This question may be testing abstention. If the context "
+                "does not contain the answer, say the information is not available."
             )
-        
-        prompt = f"""You are an AI assistant answering questions based on provided context from chat history.
 
-CONTEXT:
-{context}
+        return (
+            "You are an AI assistant answering questions based on provided context "
+            "from chat history.\n\n"
+            f"CONTEXT:\n{context}\n\n"
+            f"QUESTION:\n{question}\n\n"
+            "INSTRUCTIONS:\n"
+            "- Answer the question based ONLY on the provided context\n"
+            "- Be concise and direct\n"
+            f"- If the context doesn't contain the answer, say so{abstention_hint}\n\n"
+            "ANSWER:"
+        )
 
-QUESTION:
-{question}
+    # ── Evaluation ────────────────────────────────────────────────────────────
 
-INSTRUCTIONS:
-- Answer the question based ONLY on the provided context
-- Be concise and direct
-- If the context doesn't contain the answer, indicate that the information is not available{abstention_hint}
-
-ANSWER:"""
-        
-        return prompt
-    
     async def evaluate(self) -> None:
-        """Evaluate generated answers against expected answers."""
-        logger.info("Starting evaluation...")
-        
-        if not self.results["qa_results"]:
-            logger.warning("No QA results to evaluate")
-            return
-        
-        # Save QA results to JSONL for evaluation
-        qa_jsonl_path = self.output_dir / "qa_results.jsonl"
-        with open(qa_jsonl_path, "w") as f:
-            for result in self.results["qa_results"]:
-                jsonl_entry = {
-                    "question_id": result["question_id"],
-                    "hypothesis": result["hypothesis"],
-                }
-                f.write(json.dumps(jsonl_entry) + "\n")
-        
-        logger.info("QA results saved to %s", qa_jsonl_path)
-        
-        # Compute basic metrics
-        self._compute_basic_metrics()
-        
-        logger.info("Evaluation complete")
-    
-    def _compute_basic_metrics(self) -> None:
-        """Compute basic evaluation metrics."""
-        qa_results = self.results["qa_results"]
-        
+        logger.info("Computing evaluation metrics…")
+        qa_results = list(self._checkpoint.get_completed().values())
         if not qa_results:
+            logger.warning("No completed QA results to evaluate")
             return
-        
-        metrics = {
+
+        # Save JSONL for external LLM-judge evaluation
+        run_name = self.config.run_name or self.config.dataset_name
+        jsonl_path = self.output_dir / f"{run_name}_qa_results.jsonl"
+        with open(jsonl_path, "w", encoding="utf-8") as f:
+            for r in qa_results:
+                f.write(json.dumps({"question_id": r["question_id"], "hypothesis": r["hypothesis"]}) + "\n")
+        logger.info("QA pairs saved to %s", jsonl_path)
+
+        self._metrics = self._compute_metrics(qa_results)
+
+    def _compute_metrics(self, qa_results: list[dict[str, Any]]) -> dict[str, Any]:
+        metrics: dict[str, Any] = {
             "total_questions": len(qa_results),
-            "answered": sum(1 for r in qa_results if r["hypothesis"] and "not available" not in r["hypothesis"].lower()),
-            "abstained": sum(1 for r in qa_results if "not available" in r["hypothesis"].lower()),
+            "answered": 0,
+            "abstained": 0,
             "by_type": {},
         }
-        
-        # Group by question type
-        for result in qa_results:
-            q_type = result["question_type"]
-            if q_type not in metrics["by_type"]:
-                metrics["by_type"][q_type] = {"total": 0, "answered": 0}
-            
-            metrics["by_type"][q_type]["total"] += 1
-            if result["hypothesis"] and "not available" not in result["hypothesis"].lower():
-                metrics["by_type"][q_type]["answered"] += 1
-        
-        self.results["metrics"] = metrics
-        
-        logger.info("Metrics computed:")
-        logger.info("  Total questions: %d", metrics["total_questions"])
-        logger.info("  Answered: %d", metrics["answered"])
-        logger.info("  Abstained: %d", metrics["abstained"])
-        logger.info("  By type: %s", metrics["by_type"])
-    
+        for r in qa_results:
+            hyp = (r.get("hypothesis") or "").lower()
+            answered = bool(hyp) and "not available" not in hyp
+            if answered:
+                metrics["answered"] += 1
+            else:
+                metrics["abstained"] += 1
+
+            qt = r.get("question_type", "unknown")
+            metrics["by_type"].setdefault(qt, {"total": 0, "answered": 0})
+            metrics["by_type"][qt]["total"] += 1
+            if answered:
+                metrics["by_type"][qt]["answered"] += 1
+
+        return metrics
+
+    # ── Save results ──────────────────────────────────────────────────────────
+
     async def save_results(self) -> None:
-        """Save all results to JSON files."""
-        logger.info("Saving results...")
-        
-        # Determine run name
         run_name = self.config.run_name or self.config.dataset_name
-        
-        # Save full results
-        results_path = self.output_dir / f"{run_name}_full_results.json"
-        with open(results_path, "w") as f:
-            json.dump(self.results, f, indent=2, default=str)
-        logger.info("Full results saved to %s", results_path)
-        
-        # Save summary
+        qa_results = list(self._checkpoint.get_completed().values())
+        metrics = getattr(self, "_metrics", None)
+
+        full = {
+            "config": self.config.__dict__,
+            "metrics": metrics,
+            "qa_results": qa_results,
+            "cache_sessions": await self._session_cache.count() if self._session_cache else None,
+        }
+        full_path = self.output_dir / f"{run_name}_full_results.json"
+        with open(full_path, "w", encoding="utf-8") as f:
+            json.dump(full, f, indent=2, default=str)
+        logger.info("Full results → %s", full_path)
+
         summary = {
-            "config": self.results["config"],
-            "ingestion": self.results["ingestion_results"],
-            "retrieval": self.results["retrieval_results"],
-            "metrics": self.results["metrics"],
+            "config": self.config.__dict__,
+            "metrics": metrics,
+            "completed": self._checkpoint.n_completed,
+            "failed": self._checkpoint.n_failed,
+            "cache_sessions": await self._session_cache.count() if self._session_cache else None,
         }
         summary_path = self.output_dir / f"{run_name}_summary.json"
-        with open(summary_path, "w") as f:
+        with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, default=str)
-        logger.info("Summary saved to %s", summary_path)
-    
+        logger.info("Summary → %s", summary_path)
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+
     async def cleanup(self) -> None:
-        """Clean up resources."""
+        if self._session_cache:
+            await self._session_cache.close()
         if self.vektori_client:
             await self.vektori_client.close()
-            logger.info("Vektori client closed")
-    
-    async def run(self) -> None:
-        """Run the complete benchmark pipeline."""
-        try:
-            await self.setup()
-            await self.ingest_histories()
-            await self.retrieve_and_answer()
-            await self.evaluate()
-            await self.save_results()
-            
-            logger.info("Benchmark complete!")
-            self._print_results_summary()
-            
-        finally:
-            await self.cleanup()
-    
-    def _print_results_summary(self) -> None:
-        """Print a summary of results."""
+        logger.info("Cleanup complete")
+
+    # ── Print summary ─────────────────────────────────────────────────────────
+
+    def _print_summary(self) -> None:
+        metrics = getattr(self, "_metrics", None)
         print("\n" + "=" * 60)
         print("LONGMEMEVAL BENCHMARK RESULTS")
         print("=" * 60)
-        
-        if self.results["metrics"]:
-            metrics = self.results["metrics"]
-            print(f"\nTotal Questions: {metrics['total_questions']}")
-            print(f"Answered: {metrics['answered']}")
+
+        if metrics:
+            print(f"\nTotal : {metrics['total_questions']}")
+            print(f"Answered : {metrics['answered']}")
             print(f"Abstained: {metrics['abstained']}")
-            
-            if metrics["by_type"]:
-                print("\nBy Question Type:")
-                for q_type, counts in metrics["by_type"].items():
-                    answer_rate = (
-                        counts["answered"] / counts["total"] * 100
-                        if counts["total"] > 0
-                        else 0
-                    )
-                    print(f"  {q_type}: {counts['answered']}/{counts['total']} ({answer_rate:.1f}%)")
-        
-        if self.results["ingestion_results"]:
-            ingestion = self.results["ingestion_results"]
-            print(f"\nIngestion Results:")
-            print(f"  Successful: {ingestion['successful']}/{ingestion['total']}")
-            print(f"  Failed: {ingestion['failed']}")
-        
-        print(f"\nResults saved to: {self.output_dir}")
+            if metrics.get("by_type"):
+                print("\nBy question type:")
+                for qt, counts in metrics["by_type"].items():
+                    pct = counts["answered"] / counts["total"] * 100 if counts["total"] else 0
+                    print(f"  {qt:<35} {counts['answered']}/{counts['total']}  ({pct:.1f} %)")
+
+        print(f"\nCompleted : {self._checkpoint.n_completed}")
+        print(f"Failed    : {self._checkpoint.n_failed}")
+        print(f"\nResults in: {self.output_dir}")
         print("=" * 60 + "\n")
 
 
-async def main():
-    """Main entry point for benchmark execution."""
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _parse_date(date_str: str) -> datetime | None:
+    """Parse a LongMemEval date string like '2023/05/30 (Tue) 23:40'."""
+    if not date_str:
+        return None
+    # Strip the weekday abbreviation: '2023/05/30 (Tue) 23:40' → '2023/05/30 23:40'
+    clean = date_str.split("(")[0].strip() + " " + date_str.split(")")[-1].strip()
+    for fmt in ("%Y/%m/%d %H:%M", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(clean.strip(), fmt)
+        except ValueError:
+            continue
+    return None
+
+
+# ── CLI entry point ───────────────────────────────────────────────────────────
+
+async def main() -> None:
     import argparse
-    
-    parser = argparse.ArgumentParser(
-        description="Run Vektori benchmark on LongMemEval"
-    )
+
+    parser = argparse.ArgumentParser(description="Run Vektori benchmark on LongMemEval")
     parser.add_argument(
         "--dataset",
         choices=["longmemeval_s_cleaned", "longmemeval_m_cleaned", "longmemeval_oracle"],
         default="longmemeval_s_cleaned",
-        help="LongMemEval dataset to use (default: longmemeval_s_cleaned)",
     )
-    parser.add_argument(
-        "--depth",
-        choices=["l0", "l1", "l2"],
-        default="l1",
-        help="Retrieval depth (default: l1)",
-    )
-    parser.add_argument(
-        "--embedding-model",
-        default="openai:text-embedding-3-small",
-        help="Embedding model to use (default: openai:text-embedding-3-small)",
-    )
-    parser.add_argument(
-        "--extraction-model",
-        default="openai:gpt-4o-mini",
-        help="Extraction model to use (default: openai:gpt-4o-mini)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="benchmark_results",
-        help="Output directory for results (default: benchmark_results)",
-    )
-    parser.add_argument(
-        "--data-dir",
-        default="data",
-        help="Directory containing LongMemEval data (default: data)",
-    )
-    parser.add_argument(
-        "--top-k",
-        type=int,
-        default=10,
-        help="Number of top results to retrieve (default: 10)",
-    )
+    parser.add_argument("--depth", choices=["l0", "l1", "l2"], default="l1")
+    parser.add_argument("--embedding-model", default="sentence-transformers:BAAI/bge-m3")
+    parser.add_argument("--extraction-model", default="gemini:gemini-2.5-flash-lite")
+    parser.add_argument("--eval-model", default="gemini:gemini-2.5-flash-lite")
+    parser.add_argument("--output-dir", default="benchmark_results")
+    parser.add_argument("--data-dir", default="data")
+    parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument(
         "--run-name",
-        help="Name for this benchmark run (optional)",
+        help="Name for this run (also used to locate its checkpoint for resume)",
     )
-    
+
     args = parser.parse_args()
-    
+
     config = BenchmarkConfig(
         dataset_name=args.dataset,
         retrieval_depth=args.depth,
         embedding_model=args.embedding_model,
         extraction_model=args.extraction_model,
+        eval_model=args.eval_model,
         output_dir=args.output_dir,
         data_dir=args.data_dir,
         top_k=args.top_k,
         run_name=args.run_name,
     )
-    
-    logger.info("Starting LongMemEval benchmark with config: %s", config)
-    
-    benchmark = LongMemEvalBenchmark(config)
-    await benchmark.run()
+
+    logger.info("Starting LongMemEval benchmark — config: %s", config)
+    await LongMemEvalBenchmark(config).run()
 
 
 if __name__ == "__main__":

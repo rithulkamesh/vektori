@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Benchmark Results Viewer</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --bg2: #161b22;
+    --bg3: #1c2128;
+    --bg4: #22272e;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text2: #8b949e;
+    --text3: #6e7681;
+    --accent: #388bfd;
+    --accent-dim: #1f3a5c;
+    --correct: #3fb950;
+    --correct-bg: #12261e;
+    --partial: #d29922;
+    --partial-bg: #2d2001;
+    --wrong: #f85149;
+    --wrong-bg: #2d1117;
+    --abstained: #8b949e;
+    --abstained-bg: #161b22;
+    --judge-bg: #0d1f35;
+    --run-bg: #1a0d2e;
+    --radius: 8px;
+    --radius-sm: 4px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  #header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  #header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.3px;
+  }
+  #header .subtitle {
+    color: var(--text2);
+    font-size: 12px;
+  }
+  #header .spacer { flex: 1; }
+
+  .btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text2);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover { color: var(--text); border-color: var(--text2); opacity: 1; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+  /* ── Drop zone ── */
+  #drop-zone {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    margin: 24px;
+    color: var(--text2);
+    text-align: center;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  #drop-zone.drag-over { border-color: var(--accent); background: var(--accent-dim); }
+  #drop-zone h2 { font-size: 18px; font-weight: 500; color: var(--text); }
+  #drop-zone p { font-size: 13px; }
+  #drop-zone .file-types { font-size: 12px; color: var(--text3); margin-top: 4px; }
+
+  /* ── Main layout ── */
+  #main {
+    display: none;
+    flex: 1;
+    overflow: hidden;
+    flex-direction: column;
+  }
+  #main.visible { display: flex; }
+
+  #top-area {
+    flex-shrink: 0;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    align-items: stretch;
+  }
+
+  /* ── Summary Cards ── */
+  .summary-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    min-width: 260px;
+    flex-shrink: 0;
+  }
+  .summary-card .card-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text3);
+    margin-bottom: 4px;
+  }
+  .summary-card .card-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+  }
+  .accuracy-big {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--correct);
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  .accuracy-sub { font-size: 11px; color: var(--text2); margin-bottom: 10px; }
+
+  .verdict-bar {
+    display: flex;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    gap: 1px;
+    margin-bottom: 8px;
+  }
+  .verdict-bar .seg { height: 100%; }
+  .seg-correct { background: var(--correct); }
+  .seg-partial { background: var(--partial); }
+  .seg-wrong { background: var(--wrong); }
+  .seg-abstained { background: var(--abstained); }
+
+  .verdict-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text2);
+  }
+  .verdict-legend span { display: flex; align-items: center; gap: 3px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+
+  .type-breakdown {
+    margin-top: 10px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+  .type-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 11px;
+  }
+  .type-label { color: var(--text2); width: 130px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .type-bar-wrap { flex: 1; background: var(--bg4); border-radius: 2px; height: 4px; }
+  .type-bar-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+  .type-pct { color: var(--text3); min-width: 32px; text-align: right; }
+
+  .avg-latency { font-size: 11px; color: var(--text2); margin-top: 8px; }
+
+  /* ── Content area ── */
+  #content-area {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Left: table panel ── */
+  #table-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  /* ── Filters ── */
+  #filter-bar {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  #filter-bar select, #filter-bar input[type=text] {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    padding: 5px 8px;
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  #filter-bar select:focus, #filter-bar input[type=text]:focus {
+    border-color: var(--accent);
+  }
+  #search-input { width: 220px; }
+  .filter-label { font-size: 11px; color: var(--text3); }
+  #result-count { font-size: 12px; color: var(--text2); margin-left: auto; white-space: nowrap; }
+
+  /* ── Table ── */
+  #table-wrap {
+    flex: 1;
+    overflow: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg3);
+  }
+  th {
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text2);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+  }
+  th:hover { color: var(--text); }
+  th .sort-icon { margin-left: 4px; opacity: 0.5; }
+  th.sorted .sort-icon { opacity: 1; color: var(--accent); }
+  td {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    max-width: 0;
+  }
+  tr:hover td { background: var(--bg3); cursor: pointer; }
+  tr.selected td { background: var(--accent-dim) !important; }
+
+  .cell-truncate {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+    display: block;
+  }
+  .cell-id { font-family: monospace; font-size: 11px; color: var(--text2); }
+  .cell-q { color: var(--text); }
+  .cell-hyp { color: var(--text2); }
+  .cell-exp { color: var(--text2); }
+  .cell-latency { font-family: monospace; font-size: 12px; color: var(--text3); text-align: right; }
+  .cell-source { font-size: 11px; color: var(--text3); }
+
+  /* Verdict badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-correct { background: var(--correct-bg); color: var(--correct); }
+  .badge-partial { background: var(--partial-bg); color: var(--partial); }
+  .badge-wrong { background: var(--wrong-bg); color: var(--wrong); }
+  .badge-abstained { background: var(--abstained-bg); color: var(--abstained); border: 1px solid var(--border); }
+  .badge-judge { background: var(--judge-bg); color: #58a6ff; }
+  .badge-run { background: var(--run-bg); color: #bc8cff; }
+  .badge-type { background: var(--bg4); color: var(--text2); font-weight: 500; font-size: 11px; }
+  .badge-fm { background: var(--wrong-bg); color: var(--wrong); }
+
+  /* ── Pagination ── */
+  #pagination {
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+  }
+  #pagination .page-info { font-size: 12px; color: var(--text2); flex: 1; text-align: center; }
+  #page-size { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 3px 6px; font-size: 12px; }
+
+  /* ── Detail Panel ── */
+  #detail-panel {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    transition: width 0.25s ease, min-width 0.25s ease;
+    border-left: 1px solid var(--border);
+    background: var(--bg2);
+    display: flex;
+    flex-direction: column;
+  }
+  #detail-panel.open {
+    width: 520px;
+    min-width: 520px;
+  }
+  #detail-inner {
+    width: 520px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #detail-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  #detail-header h3 { font-size: 13px; font-weight: 600; flex: 1; }
+  #detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .detail-nav {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  .detail-section { display: flex; flex-direction: column; gap: 6px; }
+  .detail-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text3);
+    font-weight: 600;
+  }
+  .detail-value {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .compare-box {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+  }
+  .compare-box .compare-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .compare-box .compare-val { font-size: 13px; color: var(--text); line-height: 1.4; }
+  .compare-box.hyp { border-color: #30363d; }
+  .compare-box.exp { border-color: var(--correct); }
+
+  .context-block {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  .context-section-header {
+    padding: 6px 12px;
+    background: var(--bg4);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text2);
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .context-section-body {
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text2);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 250px;
+    overflow-y: auto;
+  }
+
+  details {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+  details summary {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text2);
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  details summary:hover { color: var(--text); }
+  details pre {
+    padding: 12px;
+    font-size: 11px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    color: var(--text2);
+    white-space: pre-wrap;
+    word-break: break-all;
+    border-top: 1px solid var(--border);
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--bg);
+  }
+
+  .latency-chip {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--text3);
+    background: var(--bg4);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  /* ── Empty states ── */
+  .empty-row td {
+    text-align: center;
+    color: var(--text3);
+    padding: 40px;
+    font-size: 13px;
+  }
+
+  /* ── File chips ── */
+  #files-bar {
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  #files-bar .bar-label { font-size: 11px; color: var(--text3); flex-shrink: 0; }
+  .file-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 10px 3px 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    user-select: none;
+  }
+  .file-chip:hover { border-color: var(--text2); }
+  .file-chip.active { border-color: var(--accent); background: var(--accent-dim); }
+  .file-chip .chip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .file-chip .chip-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-chip .chip-remove { color: var(--text3); margin-left: 2px; font-size: 14px; line-height: 1; }
+  .file-chip .chip-remove:hover { color: var(--wrong); }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div id="header">
+  <div>
+    <h1>Benchmark Results Viewer</h1>
+    <div class="subtitle">LongMemEval · LLM-as-a-Judge Analysis</div>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn btn-ghost btn-sm" id="add-more-btn" style="display:none" onclick="document.getElementById('file-input').click()">+ Load More Files</button>
+  <button class="btn btn-sm" onclick="document.getElementById('file-input').click()">Load Files</button>
+  <input type="file" id="file-input" multiple accept=".json,.jsonl" style="display:none">
+</div>
+
+<!-- Drop zone (shown when no files loaded) -->
+<div id="drop-zone">
+  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+  </svg>
+  <h2>Drop benchmark files here</h2>
+  <p>Or <a href="#" onclick="document.getElementById('file-input').click();return false" style="color:var(--accent)">browse to select files</a></p>
+  <div class="file-types">Supports: judge_*.json · *_full_results.json · *_summary.json · *_qa_results.jsonl</div>
+</div>
+
+<!-- Main UI (shown after files loaded) -->
+<div id="main">
+  <!-- Files bar -->
+  <div id="files-bar">
+    <span class="bar-label">Loaded:</span>
+    <div id="file-chips"></div>
+  </div>
+
+  <!-- Summary cards -->
+  <div id="top-area"></div>
+
+  <!-- Content area -->
+  <div id="content-area">
+    <div id="table-panel">
+      <!-- Filter bar -->
+      <div id="filter-bar">
+        <span class="filter-label">Filter:</span>
+        <select id="f-file"><option value="">All Files</option></select>
+        <select id="f-type"><option value="">All Types</option></select>
+        <select id="f-verdict"><option value="">All Verdicts</option></select>
+        <select id="f-failure"><option value="">All Failures</option></select>
+        <select id="f-context"><option value="">Context Has Answer: All</option><option value="true">Yes</option><option value="false">No</option></select>
+        <select id="f-depth"><option value="">All Depths</option></select>
+        <input type="text" id="search-input" placeholder="Search question, answer, explanation...">
+        <button class="btn btn-ghost btn-sm" onclick="clearFilters()">Clear</button>
+        <span id="result-count"></span>
+      </div>
+
+      <!-- Table -->
+      <div id="table-wrap">
+        <table id="results-table">
+          <thead>
+            <tr>
+              <th style="width:32px">#</th>
+              <th data-col="question_id" style="width:110px">ID <span class="sort-icon">↕</span></th>
+              <th data-col="question_type" style="width:130px">Type <span class="sort-icon">↕</span></th>
+              <th data-col="question">Question <span class="sort-icon">↕</span></th>
+              <th data-col="hypothesis">Hypothesis <span class="sort-icon">↕</span></th>
+              <th data-col="expected_answer" style="width:120px">Expected <span class="sort-icon">↕</span></th>
+              <th data-col="verdict" style="width:100px">Verdict <span class="sort-icon">↕</span></th>
+              <th data-col="failure_mode" style="width:110px">Failure <span class="sort-icon">↕</span></th>
+              <th data-col="latency_ms" style="width:80px">Latency <span class="sort-icon">↕</span></th>
+              <th data-col="_source" style="width:90px">Source <span class="sort-icon">↕</span></th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div id="pagination">
+        <button class="btn btn-ghost btn-sm" id="prev-btn" onclick="prevPage()">← Prev</button>
+        <span class="page-info" id="page-info"></span>
+        <button class="btn btn-ghost btn-sm" id="next-btn" onclick="nextPage()">Next →</button>
+        <select id="page-size" onchange="changePageSize(this.value)">
+          <option value="25">25/page</option>
+          <option value="50" selected>50/page</option>
+          <option value="100">100/page</option>
+          <option value="250">250/page</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Detail panel -->
+    <div id="detail-panel">
+      <div id="detail-inner">
+        <div id="detail-header">
+          <h3>Result Detail</h3>
+          <div class="detail-nav">
+            <button class="btn btn-ghost btn-sm" id="detail-prev" onclick="detailNav(-1)">←</button>
+            <span id="detail-nav-info"></span>
+            <button class="btn btn-ghost btn-sm" id="detail-next" onclick="detailNav(1)">→</button>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="closeDetail()">✕</button>
+        </div>
+        <div id="detail-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  files: [],          // { id, filename, type, config, records[], summary? }
+  activeFileIds: new Set(),
+  filters: { file: '', type: '', verdict: '', failure: '', context: '', depth: '', search: '' },
+  sort: { col: null, dir: 'asc' },
+  page: 0,
+  pageSize: 50,
+  selectedIdx: null,  // index into filtered results
+  filteredRecords: [],
+};
+
+// ── File Loading ────────────────────────────────────────────────────────────
+document.getElementById('file-input').addEventListener('change', e => loadFiles(e.target.files));
+
+const dropZone = document.getElementById('drop-zone');
+document.body.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+document.body.addEventListener('dragleave', e => { if (!e.relatedTarget) dropZone.classList.remove('drag-over'); });
+document.body.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  loadFiles(e.dataTransfer.files);
+});
+
+async function loadFiles(fileList) {
+  for (const file of fileList) {
+    const text = await file.text();
+    try {
+      const parsed = parseFile(file.name, text);
+      if (parsed) {
+        // Check for duplicate filename
+        if (state.files.find(f => f.filename === file.name)) {
+          const existing = state.files.find(f => f.filename === file.name);
+          Object.assign(existing, parsed);
+        } else {
+          parsed.id = Date.now() + Math.random();
+          state.files.push(parsed);
+          state.activeFileIds.add(parsed.id);
+        }
+      }
+    } catch(e) {
+      console.error('Error parsing', file.name, e);
+      alert(`Could not parse ${file.name}: ${e.message}`);
+    }
+  }
+  render();
+  document.getElementById('file-input').value = '';
+}
+
+function parseFile(filename, text) {
+  // JSONL
+  if (filename.endsWith('.jsonl')) {
+    const lines = text.trim().split('\n').filter(Boolean);
+    const records = lines.map((l, i) => { try { return JSON.parse(l); } catch(e) { return null; } }).filter(Boolean);
+    return { filename, type: 'qa-jsonl', config: {}, records };
+  }
+
+  const data = JSON.parse(text);
+
+  // Judge file
+  if (data.config && data.config.provider && Array.isArray(data.results)) {
+    return {
+      filename,
+      type: 'judge',
+      config: data.config,
+      records: data.results,
+      summary: data.summary || null,
+    };
+  }
+
+  // Full results
+  if (data.config && Array.isArray(data.qa_results) && data.metrics) {
+    return {
+      filename,
+      type: 'full-results',
+      config: data.config,
+      records: data.qa_results,
+      metrics: data.metrics,
+    };
+  }
+
+  // Checkpoint (has "completed" object)
+  if (data.completed && typeof data.completed === 'object' && !Array.isArray(data.completed)) {
+    const records = Object.values(data.completed);
+    return { filename, type: 'checkpoint', config: {}, records };
+  }
+
+  // Summary only
+  if (data.config && data.metrics && !data.qa_results && !data.results) {
+    return { filename, type: 'summary', config: data.config, records: [], metrics: data.metrics };
+  }
+
+  throw new Error('Unrecognized file format');
+}
+
+// ── Render ──────────────────────────────────────────────────────────────────
+function render() {
+  const hasFiles = state.files.length > 0;
+  document.getElementById('drop-zone').style.display = hasFiles ? 'none' : 'flex';
+  document.getElementById('main').classList.toggle('visible', hasFiles);
+  document.getElementById('add-more-btn').style.display = hasFiles ? '' : 'none';
+
+  renderFileChips();
+  renderSummaryCards();
+  populateFilterDropdowns();
+  applyFiltersAndRender();
+}
+
+function renderFileChips() {
+  const colors = ['#388bfd','#3fb950','#d29922','#f85149','#bc8cff','#58a6ff'];
+  const chips = document.getElementById('file-chips');
+  chips.innerHTML = state.files.map((f, i) => {
+    const active = state.activeFileIds.has(f.id);
+    const color = colors[i % colors.length];
+    const label = fileLabel(f);
+    return `<div class="file-chip ${active ? 'active' : ''}" onclick="toggleFile(${f.id})" title="${f.filename}">
+      <span class="chip-dot" style="background:${color}"></span>
+      <span class="chip-name">${f.filename}</span>
+      <span class="badge ${typeBadgeClass(f.type)}" style="font-size:10px;padding:1px 5px">${label}</span>
+      <span class="chip-remove" onclick="removeFile(event,${f.id})">×</span>
+    </div>`;
+  }).join('');
+}
+
+function fileLabel(f) {
+  if (f.type === 'judge') return `${f.config.provider || 'judge'}`;
+  if (f.type === 'full-results') return 'run';
+  if (f.type === 'checkpoint') return 'ckpt';
+  if (f.type === 'qa-jsonl') return 'jsonl';
+  if (f.type === 'summary') return 'summary';
+  return f.type;
+}
+
+function typeBadgeClass(type) {
+  if (type === 'judge') return 'badge-judge';
+  if (type === 'full-results' || type === 'qa-jsonl' || type === 'checkpoint') return 'badge-run';
+  return 'badge-type';
+}
+
+function toggleFile(id) {
+  if (state.activeFileIds.has(id)) state.activeFileIds.delete(id);
+  else state.activeFileIds.add(id);
+  render();
+}
+
+function removeFile(e, id) {
+  e.stopPropagation();
+  state.files = state.files.filter(f => f.id !== id);
+  state.activeFileIds.delete(id);
+  render();
+}
+
+// ── Summary Cards ────────────────────────────────────────────────────────────
+function renderSummaryCards() {
+  const topArea = document.getElementById('top-area');
+  const activeJudges = state.files.filter(f => f.type === 'judge' && state.activeFileIds.has(f.id));
+  const activeRuns = state.files.filter(f => (f.type === 'full-results') && state.activeFileIds.has(f.id));
+
+  let html = '';
+
+  for (const f of activeJudges) {
+    const records = f.records;
+    const total = records.length;
+    if (total === 0) continue;
+
+    const counts = { CORRECT: 0, PARTIALLY_CORRECT: 0, WRONG: 0, ABSTAINED: 0 };
+    const byType = {};
+    let totalLatency = 0, latencyCount = 0;
+
+    for (const r of records) {
+      if (counts[r.verdict] !== undefined) counts[r.verdict]++;
+      if (!byType[r.question_type]) byType[r.question_type] = { correct: 0, total: 0 };
+      byType[r.question_type].total++;
+      if (r.verdict === 'CORRECT') byType[r.question_type].correct++;
+      if (r.latency_ms) { totalLatency += r.latency_ms; latencyCount++; }
+    }
+
+    const accuracy = total > 0 ? ((counts.CORRECT / total) * 100).toFixed(1) : '0.0';
+    const avgLat = latencyCount > 0 ? (totalLatency / latencyCount).toFixed(0) : '—';
+
+    const barSegs = Object.entries(counts).map(([k, v]) => {
+      const pct = (v / total * 100).toFixed(1);
+      return `<div class="seg seg-${k.toLowerCase().replace('_correct','').replace('partially','partial')}" style="flex:${v}" title="${k}: ${v} (${pct}%)"></div>`;
+    }).join('');
+
+    const typeRows = Object.entries(byType).sort((a,b) => b[1].total - a[1].total).map(([type, d]) => {
+      const pct = d.total > 0 ? (d.correct / d.total * 100) : 0;
+      return `<div class="type-row">
+        <span class="type-label" title="${type}">${type}</span>
+        <div class="type-bar-wrap"><div class="type-bar-fill" style="width:${pct}%"></div></div>
+        <span class="type-pct">${pct.toFixed(0)}%</span>
+      </div>`;
+    }).join('');
+
+    html += `<div class="summary-card">
+      <div class="card-title">Judge · ${f.config.provider || ''}</div>
+      <div class="card-name" title="${f.filename}">${f.config.model || f.filename}</div>
+      <div class="accuracy-big">${accuracy}%</div>
+      <div class="accuracy-sub">${counts.CORRECT} correct / ${total} total</div>
+      <div class="verdict-bar">${barSegs}</div>
+      <div class="verdict-legend">
+        <span><span class="dot" style="background:var(--correct)"></span> ${counts.CORRECT} correct</span>
+        <span><span class="dot" style="background:var(--partial)"></span> ${counts.PARTIALLY_CORRECT} partial</span>
+        <span><span class="dot" style="background:var(--wrong)"></span> ${counts.WRONG} wrong</span>
+        <span><span class="dot" style="background:var(--abstained)"></span> ${counts.ABSTAINED} abstained</span>
+      </div>
+      <div class="type-breakdown">${typeRows}</div>
+      <div class="avg-latency">Avg latency: ${avgLat} ms</div>
+    </div>`;
+  }
+
+  for (const f of activeRuns) {
+    if (!f.metrics) continue;
+    const m = f.metrics;
+    const typeRows = Object.entries(m.by_type || {}).map(([type, d]) => {
+      return `<div class="type-row">
+        <span class="type-label" title="${type}">${type}</span>
+        <div class="type-bar-wrap"><div class="type-bar-fill" style="width:${d.total > 0 ? (d.answered/d.total*100) : 0}%"></div></div>
+        <span class="type-pct">${d.answered}/${d.total}</span>
+      </div>`;
+    }).join('');
+    html += `<div class="summary-card">
+      <div class="card-title">Run Results</div>
+      <div class="card-name" title="${f.filename}">${f.filename}</div>
+      <div class="accuracy-big">${m.answered}</div>
+      <div class="accuracy-sub">answered / ${m.total_questions} total (${m.abstained} abstained)</div>
+      <div class="type-breakdown">${typeRows}</div>
+    </div>`;
+  }
+
+  topArea.innerHTML = html || '<div style="color:var(--text3);font-size:12px;padding:8px">No active files with summary data</div>';
+}
+
+// ── Filter dropdowns ─────────────────────────────────────────────────────────
+function populateFilterDropdowns() {
+  const activeRecords = getActiveRecords();
+
+  const types = [...new Set(activeRecords.map(r => r.question_type).filter(Boolean))].sort();
+  const verdicts = [...new Set(activeRecords.map(r => r.verdict).filter(Boolean))].sort();
+  const failures = [...new Set(activeRecords.map(r => r.failure_mode).filter(f => f && f !== 'null'))].sort();
+  const depths = [...new Set(activeRecords.map(r => r.retrieval_depth).filter(Boolean))].sort();
+
+  setOptions('f-type', types, 'All Types');
+  setOptions('f-verdict', verdicts, 'All Verdicts');
+  setOptions('f-failure', ['(none)', ...failures], 'All Failures');
+  setOptions('f-depth', depths, 'All Depths');
+
+  // File filter
+  const fileSelect = document.getElementById('f-file');
+  const prevFile = fileSelect.value;
+  fileSelect.innerHTML = '<option value="">All Files</option>' +
+    state.files.filter(f => state.activeFileIds.has(f.id)).map(f =>
+      `<option value="${f.id}" ${prevFile == f.id ? 'selected' : ''}>${f.filename}</option>`
+    ).join('');
+}
+
+function setOptions(id, values, allLabel) {
+  const sel = document.getElementById(id);
+  const prev = sel.value;
+  sel.innerHTML = `<option value="">${allLabel}</option>` +
+    values.map(v => `<option value="${v}" ${prev === v ? 'selected' : ''}>${v}</option>`).join('');
+  if (values.includes(prev)) sel.value = prev;
+}
+
+// ── Filtering & Sorting ──────────────────────────────────────────────────────
+function getActiveRecords() {
+  const records = [];
+  for (const f of state.files) {
+    if (!state.activeFileIds.has(f.id)) continue;
+    for (const r of f.records) {
+      records.push({ ...r, _fileId: f.id, _filename: f.filename, _source: `${f.config.provider || f.type}` });
+    }
+  }
+  return records;
+}
+
+function applyFiltersAndRender() {
+  const f = state.filters;
+  let records = getActiveRecords();
+
+  if (f.file) records = records.filter(r => String(r._fileId) === String(f.file));
+  if (f.type) records = records.filter(r => r.question_type === f.type);
+  if (f.verdict) records = records.filter(r => r.verdict === f.verdict);
+  if (f.failure) {
+    if (f.failure === '(none)') records = records.filter(r => !r.failure_mode || r.failure_mode === 'null');
+    else records = records.filter(r => r.failure_mode === f.failure);
+  }
+  if (f.context) records = records.filter(r => String(r.context_has_answer) === f.context);
+  if (f.depth) records = records.filter(r => r.retrieval_depth === f.depth);
+  if (f.search) {
+    const q = f.search.toLowerCase();
+    records = records.filter(r =>
+      (r.question || '').toLowerCase().includes(q) ||
+      (r.hypothesis || '').toLowerCase().includes(q) ||
+      (r.expected_answer || '').toLowerCase().includes(q) ||
+      (r.explanation || '').toLowerCase().includes(q) ||
+      (r.question_id || '').toLowerCase().includes(q)
+    );
+  }
+
+  // Sort
+  if (state.sort.col) {
+    const col = state.sort.col;
+    const dir = state.sort.dir === 'asc' ? 1 : -1;
+    records.sort((a, b) => {
+      const av = a[col] ?? '';
+      const bv = b[col] ?? '';
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }
+
+  state.filteredRecords = records;
+  document.getElementById('result-count').textContent = `${records.length} results`;
+
+  // Clamp page
+  const totalPages = Math.max(1, Math.ceil(records.length / state.pageSize));
+  if (state.page >= totalPages) state.page = totalPages - 1;
+
+  renderTable();
+  renderPagination();
+}
+
+function renderTable() {
+  const tbody = document.getElementById('table-body');
+  const start = state.page * state.pageSize;
+  const slice = state.filteredRecords.slice(start, start + state.pageSize);
+
+  if (slice.length === 0) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">No results match your filters</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = slice.map((r, i) => {
+    const globalIdx = start + i;
+    const selected = state.selectedIdx === globalIdx;
+    return `<tr class="${selected ? 'selected' : ''}" onclick="selectRow(${globalIdx})">
+      <td style="color:var(--text3);font-size:11px">${globalIdx + 1}</td>
+      <td><span class="cell-id cell-truncate" style="max-width:100px" title="${esc(r.question_id)}">${esc(r.question_id || '—')}</span></td>
+      <td><span class="badge badge-type">${esc(r.question_type || '—')}</span></td>
+      <td><span class="cell-truncate cell-q" style="max-width:240px" title="${esc(r.question)}">${esc(r.question || '—')}</span></td>
+      <td><span class="cell-truncate cell-hyp" style="max-width:180px" title="${esc(r.hypothesis)}">${esc(r.hypothesis || '—')}</span></td>
+      <td><span class="cell-truncate cell-exp" style="max-width:110px" title="${esc(r.expected_answer)}">${esc(r.expected_answer || '—')}</span></td>
+      <td>${verdictBadge(r.verdict)}</td>
+      <td>${r.failure_mode && r.failure_mode !== 'null' ? `<span class="badge badge-fm" style="font-size:10px">${esc(r.failure_mode)}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
+      <td class="cell-latency">${r.latency_ms != null ? Math.round(r.latency_ms) + 'ms' : '—'}</td>
+      <td class="cell-source">${esc(r._source || '—')}</td>
+    </tr>`;
+  }).join('');
+
+  // Update sort indicators
+  document.querySelectorAll('th[data-col]').forEach(th => {
+    const col = th.dataset.col;
+    th.classList.toggle('sorted', col === state.sort.col);
+    const icon = th.querySelector('.sort-icon');
+    if (icon) icon.textContent = col === state.sort.col ? (state.sort.dir === 'asc' ? '↑' : '↓') : '↕';
+  });
+}
+
+function renderPagination() {
+  const total = state.filteredRecords.length;
+  const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+  const start = state.page * state.pageSize + 1;
+  const end = Math.min((state.page + 1) * state.pageSize, total);
+  document.getElementById('page-info').textContent = total > 0 ? `Page ${state.page + 1} of ${totalPages} · ${start}–${end} of ${total}` : 'No results';
+  document.getElementById('prev-btn').disabled = state.page === 0;
+  document.getElementById('next-btn').disabled = state.page >= totalPages - 1;
+}
+
+// ── Filter events ─────────────────────────────────────────────────────────────
+['f-file','f-type','f-verdict','f-failure','f-context','f-depth'].forEach(id => {
+  document.getElementById(id).addEventListener('change', e => {
+    const key = id.replace('f-','');
+    state.filters[key] = e.target.value;
+    state.page = 0;
+    closeDetail();
+    applyFiltersAndRender();
+  });
+});
+document.getElementById('search-input').addEventListener('input', e => {
+  state.filters.search = e.target.value;
+  state.page = 0;
+  applyFiltersAndRender();
+});
+
+function clearFilters() {
+  state.filters = { file: '', type: '', verdict: '', failure: '', context: '', depth: '', search: '' };
+  document.getElementById('f-file').value = '';
+  document.getElementById('f-type').value = '';
+  document.getElementById('f-verdict').value = '';
+  document.getElementById('f-failure').value = '';
+  document.getElementById('f-context').value = '';
+  document.getElementById('f-depth').value = '';
+  document.getElementById('search-input').value = '';
+  state.page = 0;
+  applyFiltersAndRender();
+}
+
+// ── Sort ──────────────────────────────────────────────────────────────────────
+document.querySelectorAll('th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (state.sort.col === col) state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+    else { state.sort.col = col; state.sort.dir = 'asc'; }
+    applyFiltersAndRender();
+  });
+});
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+function prevPage() { if (state.page > 0) { state.page--; renderTable(); renderPagination(); } }
+function nextPage() {
+  const totalPages = Math.ceil(state.filteredRecords.length / state.pageSize);
+  if (state.page < totalPages - 1) { state.page++; renderTable(); renderPagination(); }
+}
+function changePageSize(val) { state.pageSize = parseInt(val); state.page = 0; renderTable(); renderPagination(); }
+
+// ── Detail Panel ──────────────────────────────────────────────────────────────
+function selectRow(idx) {
+  state.selectedIdx = idx;
+  renderTable();
+  renderDetail(idx);
+}
+
+function detailNav(dir) {
+  const newIdx = state.selectedIdx + dir;
+  if (newIdx < 0 || newIdx >= state.filteredRecords.length) return;
+  state.selectedIdx = newIdx;
+  // Ensure the page shows this row
+  const targetPage = Math.floor(newIdx / state.pageSize);
+  if (targetPage !== state.page) { state.page = targetPage; renderTable(); renderPagination(); }
+  else renderTable();
+  renderDetail(newIdx);
+}
+
+function closeDetail() {
+  state.selectedIdx = null;
+  document.getElementById('detail-panel').classList.remove('open');
+  renderTable();
+}
+
+function renderDetail(idx) {
+  const r = state.filteredRecords[idx];
+  if (!r) return;
+  document.getElementById('detail-panel').classList.add('open');
+
+  document.getElementById('detail-nav-info').textContent = `${idx + 1} / ${state.filteredRecords.length}`;
+  document.getElementById('detail-prev').disabled = idx === 0;
+  document.getElementById('detail-next').disabled = idx === state.filteredRecords.length - 1;
+
+  const contextSections = parseContext(r.retrieved_context || '');
+
+  document.getElementById('detail-body').innerHTML = `
+    <div class="detail-section">
+      <div class="detail-meta">
+        <span class="badge badge-type">${esc(r.question_type || '—')}</span>
+        <span class="cell-id" style="font-size:11px;color:var(--text3)">${esc(r.question_id || '')}</span>
+        ${r.latency_ms != null ? `<span class="latency-chip">${Math.round(r.latency_ms)}ms</span>` : ''}
+        ${r._filename ? `<span style="font-size:11px;color:var(--text3)" title="${esc(r._filename)}">${esc(r._source || '')}</span>` : ''}
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-label">Question</div>
+      <div class="detail-value">${esc(r.question || '—')}</div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-label">Answer Comparison</div>
+      <div class="compare-grid">
+        <div class="compare-box hyp">
+          <div class="compare-label">Model Hypothesis</div>
+          <div class="compare-val">${esc(r.hypothesis || '—')}</div>
+        </div>
+        <div class="compare-box exp">
+          <div class="compare-label">Expected Answer</div>
+          <div class="compare-val">${esc(r.expected_answer || '—')}</div>
+        </div>
+      </div>
+    </div>
+
+    ${r.verdict ? `<div class="detail-section">
+      <div class="detail-label">Judgment</div>
+      <div class="detail-meta">
+        ${verdictBadge(r.verdict)}
+        ${r.failure_mode && r.failure_mode !== 'null' ? `<span class="badge badge-fm">${esc(r.failure_mode)}</span>` : ''}
+        ${r.context_has_answer != null ? `<span class="badge badge-type">Context has answer: ${r.context_has_answer ? 'Yes' : 'No'}</span>` : ''}
+        ${r.parse_error ? `<span class="badge badge-fm">Parse Error</span>` : ''}
+      </div>
+    </div>` : ''}
+
+    ${r.explanation ? `<div class="detail-section">
+      <div class="detail-label">Judge Explanation</div>
+      <div class="detail-value" style="color:var(--text2)">${esc(r.explanation)}</div>
+    </div>` : ''}
+
+    ${contextSections.length > 0 ? `<div class="detail-section">
+      <div class="detail-label">Retrieved Context</div>
+      <div class="context-block">
+        ${contextSections.map(s => `
+          <div class="context-section-header">${esc(s.header)}</div>
+          <div class="context-section-body">${esc(s.body)}</div>
+        `).join('')}
+      </div>
+    </div>` : r.retrieved_context ? `<div class="detail-section">
+      <div class="detail-label">Retrieved Context</div>
+      <div class="context-block">
+        <div class="context-section-body">${esc(r.retrieved_context)}</div>
+      </div>
+    </div>` : ''}
+
+    ${r.raw_judge_response ? `<div class="detail-section">
+      <details>
+        <summary>Raw Judge Response</summary>
+        <pre>${esc(r.raw_judge_response)}</pre>
+      </details>
+    </div>` : ''}
+  `;
+}
+
+function parseContext(ctx) {
+  if (!ctx) return [];
+  const sections = [];
+  // Split on ## headings
+  const parts = ctx.split(/\n(?=##\s)/);
+  for (const part of parts) {
+    const match = part.match(/^##\s+(.+)\n([\s\S]*)/);
+    if (match) {
+      sections.push({ header: match[1].trim(), body: match[2].trim() });
+    } else if (part.trim()) {
+      sections.push({ header: 'Context', body: part.trim() });
+    }
+  }
+  return sections;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function verdictBadge(verdict) {
+  if (!verdict) return '<span style="color:var(--text3)">—</span>';
+  const cls = {
+    CORRECT: 'badge-correct',
+    PARTIALLY_CORRECT: 'badge-partial',
+    WRONG: 'badge-wrong',
+    ABSTAINED: 'badge-abstained',
+  }[verdict] || 'badge-type';
+  return `<span class="badge ${cls}">${esc(verdict)}</span>`;
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'Escape') closeDetail();
+  if (state.selectedIdx !== null) {
+    if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); detailNav(1); }
+    if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); detailNav(-1); }
+  }
+});
+</script>
+</body>
+</html>

@@ -115,7 +115,7 @@ class FactExtractor:
         max_facts: int = 8,
         max_insights: int = 3,
         max_input_tokens: int = 4000,
-        max_output_tokens: int = 1024,
+        max_output_tokens: int = 8192,
     ) -> None:
         self.db = db
         self.embedder = embedder
@@ -136,6 +136,8 @@ class FactExtractor:
         agent_id: str | None = None,
         sentence_ids: list[str] | None = None,
         session_time: datetime | None = None,
+        _capture_out: list[dict[str, Any]] | None = None,
+        _skip_cross_session: bool = False,
     ) -> dict[str, Any]:
         """
         One LLM call: extract facts, run dedup in code, link to sentences.
@@ -160,16 +162,18 @@ class FactExtractor:
             return {"facts_inserted": 0, "error": str(e)}
 
         facts_inserted = await self._process_facts(
-            new_facts, session_id, user_id, agent_id, conversation, session_time
+            new_facts, session_id, user_id, agent_id, conversation, session_time,
+            _capture_out=_capture_out,
         )
 
         # ── Cross-session trigger: every 3rd session ──
-        try:
-            session_count = await self.db.count_sessions(user_id, agent_id)
-            if session_count % 3 == 0 and session_count > 1:
-                await self.extract_cross_session_insights(user_id, agent_id)
-        except Exception as e:
-            logger.warning("Cross-session insight trigger failed: %s", e)
+        if not _skip_cross_session:
+            try:
+                session_count = await self.db.count_sessions(user_id, agent_id)
+                if session_count % 3 == 0 and session_count > 1:
+                    await self.extract_cross_session_insights(user_id, agent_id)
+            except Exception as e:
+                logger.warning("Cross-session insight trigger failed: %s", e)
 
         logger.info("Extraction complete for session %s: %d facts", session_id, facts_inserted)
         return {"facts_inserted": facts_inserted}
@@ -254,6 +258,7 @@ class FactExtractor:
         agent_id: str | None,
         conversation: str,
         session_time: datetime | None = None,
+        _capture_out: list[dict[str, Any]] | None = None,
     ) -> int:
         """
         For each fact:
@@ -317,6 +322,15 @@ class FactExtractor:
                 )
                 facts_inserted += 1
 
+                if _capture_out is not None:
+                    _capture_out.append({
+                        "text": fact_data["text"],
+                        "subject": subject,
+                        "confidence": fact_data.get("confidence", 1.0),
+                        "metadata": meta or {},
+                        "source_quotes": fact_data.get("source_quotes") or [],
+                    })
+
                 if fact_data.get("source_quotes"):
                     linked = await self._link_to_source_sentences(
                         fact_data["source_quotes"], session_id, conversation
@@ -326,6 +340,69 @@ class FactExtractor:
 
             except Exception as e:
                 logger.warning("Failed to insert fact '%s': %s", fact_data.get("text"), e)
+
+        return facts_inserted
+
+    # ── Cache Replay ──────────────────────────────────────────────────────────
+
+    async def replay_facts(
+        self,
+        cached_facts: list[dict[str, Any]],
+        session_id: str,
+        user_id: str,
+        agent_id: str | None = None,
+        session_time: datetime | None = None,
+    ) -> int:
+        """
+        Insert pre-extracted facts from the session cache. No LLM call.
+        Re-embeds fact texts (local model, cheap) so embeddings are fresh.
+        Used by the benchmark runner for cache-hit sessions.
+        """
+        if not cached_facts:
+            return 0
+
+        texts = [f["text"] for f in cached_facts]
+        try:
+            embeddings = await self.embedder.embed_batch(texts)
+        except Exception as e:
+            logger.error("Batch embed failed during fact replay for session %s: %s", session_id, e)
+            return 0
+
+        facts_inserted = 0
+        for fact_data, fact_emb in zip(cached_facts, embeddings):
+            try:
+                subject = fact_data.get("subject") or None
+
+                # Dedup check — in a fresh user context this always returns None,
+                # but we run it anyway for correctness if sessions overlap.
+                dedup = await self._check_dedup(fact_emb, session_id, user_id, agent_id, subject)
+                if dedup is not None:
+                    existing_id, same_session = dedup
+                    await self.db.increment_fact_mentions(existing_id)
+                    if same_session:
+                        continue
+
+                meta = fact_data.get("metadata") or {}
+                fact_id = await self.db.insert_fact(
+                    text=fact_data["text"],
+                    embedding=fact_emb,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    subject=subject,
+                    confidence=fact_data.get("confidence", 1.0),
+                    metadata=meta or None,
+                    event_time=session_time,
+                )
+                facts_inserted += 1
+
+                for quote in fact_data.get("source_quotes") or []:
+                    sent = await self.db.find_sentence_containing(session_id, quote)
+                    if sent:
+                        await self.db.insert_fact_source(fact_id, sent["id"])
+
+            except Exception as e:
+                logger.warning("Failed to replay fact '%s': %s", fact_data.get("text"), e)
 
         return facts_inserted
 
@@ -438,7 +515,9 @@ class FactExtractor:
         facts_by_session: dict[str, list[str]] = {}
         for fid, fact in fact_id_map.items():
             sid = fact.get("session_id") or "unknown"
-            source = (fact.get("metadata") or {}).get("source", "user")
+            meta_raw = fact.get("metadata") or "{}"
+            meta = json.loads(meta_raw) if isinstance(meta_raw, str) else (meta_raw or {})
+            source = meta.get("source", "user")
             facts_by_session.setdefault(sid, []).append(f"[{fid}][{source}] {fact['text']}")
 
         if len(facts_by_session) < 2:

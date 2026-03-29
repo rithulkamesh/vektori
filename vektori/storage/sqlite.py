@@ -165,6 +165,8 @@ class SQLiteBackend(StorageBackend):
             await self._conn.execute("ALTER TABLE facts ADD COLUMN subject TEXT")
         if "mentions" not in cols:
             await self._conn.execute("ALTER TABLE facts ADD COLUMN mentions INTEGER DEFAULT 1")
+        if "event_time" not in cols:
+            await self._conn.execute("ALTER TABLE facts ADD COLUMN event_time TEXT")
 
     async def close(self) -> None:
         if self._conn:
