@@ -40,7 +40,12 @@ USER facts (source: "user"):
     0.5–0.69 → inferred from indirect user statement
 
 ASSISTANT facts (source: "assistant"):
-- Extract only notable things the assistant said that are worth remembering: recommendations made, advice given, information provided, resources or options presented
+- Extract only notable things the assistant said that are worth remembering: recommendations made, advice given, specific information provided, named resources or options presented
+- The fact text MUST include the actual specific content — names, values, titles, quantities. Do NOT summarize that something was said without saying what.
+  BAD: "Assistant recommended a restaurant in Bandung."
+  GOOD: "Assistant recommended Miss Bee Providore for Nasi Goreng in Cihampelas Walk, Bandung."
+  BAD: "Assistant provided a list of language learning apps."
+  GOOD: "Assistant recommended Memrise (uses mnemonics), Duolingo (gamified), and Babbel for language learning."
 - Do NOT extract generic filler ("Sure, I can help", "Great question", "Let me know if you need anything")
 - confidence: always 1.0
 - source_quotes: verbatim text from the ASSISTANT turn
@@ -101,9 +106,10 @@ class FactExtractor:
       - LLM returns derived_from_fact_ids — ID-based, no fragile text matching
       - Existing insights passed in to prevent duplication
 
-    Write-time semantic dedup (PHASE2 item 3):
+    Write-time semantic dedup:
       - Same session + sim > 0.92 → skip insert, increment mentions on existing
-      - Different session + sim > 0.85 → insert + increment mentions on older (cross-session IDF signal)
+      - Different session + sim > 0.85 → insert new fact, leave old fact unchanged
+        (old fact must NOT get a mentions boost — it may have been superseded)
       - Everything else → insert normally
     """
 
@@ -265,8 +271,8 @@ class FactExtractor:
           1. Batch embed all fact texts (one embed call for the whole list)
           2. Write-time semantic dedup:
              - same session + sim > 0.92 → skip, increment mentions on existing
-             - diff session + sim > 0.85 → insert + increment mentions on older
-          3. Insert fact
+             - diff session + sim > 0.85 → insert new fact, leave old untouched
+          3. Insert fact with event_time = session_time
           4. Link to source sentences
         """
         if not fact_list:
@@ -298,9 +304,11 @@ class FactExtractor:
                         await self.db.increment_fact_mentions(existing_id)
                         continue
                     else:
-                        # Cross-session near-dup: insert new fact, note recurrence on older
-                        await self.db.increment_fact_mentions(existing_id)
-                        # Fall through to insert
+                        # Cross-session near-dup: insert the new fact but do NOT boost
+                        # mentions on the old one. The old fact may have been superseded
+                        # (knowledge-update scenario) — giving it a mentions boost would
+                        # make it outrank the newer fact even after temporal decay is applied.
+                        pass  # fall through to insert
 
                 # Carry temporal expression and source role in metadata
                 meta: dict[str, Any] = {}

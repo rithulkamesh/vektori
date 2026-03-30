@@ -206,6 +206,7 @@ class LongMemEvalBenchmark:
                         done, total, await self._session_cache.count(),
                     )
 
+
             except Exception as e:
                 logger.error("Question %s failed: %s", qid, e, exc_info=True)
                 self._checkpoint.mark_failed(qid, str(e))

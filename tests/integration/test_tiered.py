@@ -61,7 +61,7 @@ async def test_l1_depth(populated_pipeline):
     results = await populated_pipeline.search("WhatsApp preference", "u1", depth="l1")
     assert "facts" in results
     assert "insights" in results
-    assert "sentences" not in results
+    assert "sentences" in results  # L1 returns source sentences (exact origin of each fact)
     # Should discover the linked insight
     assert len(results["insights"]) == 1
     assert "WhatsApp" in results["insights"][0]["text"]

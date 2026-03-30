@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from vektori.config import QualityConfig, VektoriConfig
@@ -123,6 +124,7 @@ class Vektori:
         user_id: str,
         agent_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        session_time: datetime | None = None,
     ) -> dict[str, Any]:
         """
         Store a conversation session into the memory graph.
@@ -144,7 +146,7 @@ class Vektori:
             {"status": "ok", "sentences_stored": N, "extraction": "queued"|"done"|"skipped"}
         """
         await self._ensure_initialized()
-        return await self._pipeline.ingest(messages, session_id, user_id, agent_id, metadata)
+        return await self._pipeline.ingest(messages, session_id, user_id, agent_id, metadata, session_time=session_time)
 
     async def search(
         self,
