@@ -413,8 +413,9 @@ class LongMemEvalBenchmark:
 
         llm = create_llm(self.config.eval_model)
         prompt = self._build_qa_prompt(question, context, question_type, question_date)
+        max_tokens = 800 if question_type == "temporal-reasoning" else 500
         try:
-            return (await llm.generate(prompt, max_tokens=500)).strip()
+            return (await llm.generate(prompt, max_tokens=max_tokens)).strip()
         except Exception as e:
             logger.warning("Answer generation failed: %s", e)
             return "Unable to generate answer due to API error."
@@ -429,6 +430,22 @@ class LongMemEvalBenchmark:
             abs_hint = (
                 "\n- This question may be specifically testing whether you correctly "
                 "recognise that the information was never mentioned"
+            )
+
+        if question_type == "temporal-reasoning":
+            return (
+                "You are an AI assistant answering questions based on provided context "
+                "from chat history.\n\n"
+                f"{date_line}"
+                f"CONTEXT:\n{context}\n\n"
+                f"QUESTION:\n{question}\n\n"
+                "INSTRUCTIONS:\n"
+                "- Answer based ONLY on the provided context\n"
+                "- First, list the relevant dated events from the context\n"
+                "- Then compute the answer (count days/weeks/months between dates)\n"
+                "- If the context does not contain enough information to answer, say "
+                "\"I don't have that information\"\n\n"
+                "REASONING:\n"
             )
 
         return (

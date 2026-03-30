@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 FACTS_PROMPT = """Extract facts from this conversation — both facts about the USER and notable things the ASSISTANT said.
 
-CONVERSATION:
+{session_date_line}CONVERSATION:
 {conversation}
 
 Return JSON:
@@ -32,7 +32,7 @@ Return JSON:
 }}
 
 USER facts (source: "user"):
-- Extract facts about the USER or entities they explicitly mention
+- Extract facts about the USER or entities they explicitly mention, including preferences ("I love X", "I prefer Y", "I always use Z", "I hate X"), habits, and opinions
 - When the user gives a short response ("yes", "yeah", "nope", "exactly"), use the preceding ASSISTANT turn to understand what they confirmed or denied, but source_quotes must still be the USER's words
 - confidence:
     0.9–1.0  → user volunteers information unprompted ("I work at Google")
@@ -55,6 +55,9 @@ General:
 - subject: 'user' when about the person speaking; a named entity when about someone/something they mention; 'assistant' for assistant facts
 - Extract at most {max_facts} facts total — prioritize high-confidence, significant ones
 - If nothing factual was stated, return {{"facts": []}}
+- Dates in `text`: if CONVERSATION DATE is provided, replace relative time references with the actual date.
+  "today" → "on YYYY-MM-DD", "yesterday" → "on YYYY-MM-DD", "last week" → "on week of YYYY-MM-DD", etc.
+  Do NOT use relative expressions if you know the absolute date.
 
 Return ONLY the JSON."""
 
@@ -160,9 +163,9 @@ class FactExtractor:
         # ── Extract facts — chunk long conversations so early facts aren't lost ──
         try:
             if len(conversation) <= self._max_chunk_chars:
-                new_facts = await self._extract_facts(conversation)
+                new_facts = await self._extract_facts(conversation, session_time)
             else:
-                new_facts = await self._extract_facts_chunked(messages, conversation)
+                new_facts = await self._extract_facts_chunked(messages, conversation, session_time)
         except Exception as e:
             logger.error("Fact extraction failed for session %s: %s", session_id, e)
             return {"facts_inserted": 0, "error": str(e)}
@@ -186,8 +189,18 @@ class FactExtractor:
 
     # ── LLM Call ──────────────────────────────────────────────────────────────
 
-    async def _extract_facts(self, conversation: str) -> list[dict[str, Any]]:
-        prompt = FACTS_PROMPT.format(conversation=conversation, max_facts=self.max_facts)
+    async def _extract_facts(
+        self, conversation: str, session_time: datetime | None = None
+    ) -> list[dict[str, Any]]:
+        if session_time:
+            session_date_line = f"CONVERSATION DATE: {session_time.strftime('%Y-%m-%d')}\n\n"
+        else:
+            session_date_line = ""
+        prompt = FACTS_PROMPT.format(
+            conversation=conversation,
+            max_facts=self.max_facts,
+            session_date_line=session_date_line,
+        )
         response = await self.llm.generate(prompt, max_tokens=self._max_output_tokens)
         return _parse_json_response(response).get("facts", [])
 
@@ -195,6 +208,7 @@ class FactExtractor:
         self,
         messages: list[dict[str, str]],
         full_conversation: str,
+        session_time: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Chunk a long conversation and extract facts from each chunk.
 
@@ -217,7 +231,7 @@ class FactExtractor:
                 f"{m['role'].upper()}: {m['content']}" for m in chunk
             )
             try:
-                chunk_facts = await self._extract_facts(chunk_conv)
+                chunk_facts = await self._extract_facts(chunk_conv, session_time)
                 all_facts.extend(chunk_facts)
             except Exception as e:
                 logger.warning("Chunk extraction failed (%d messages): %s", len(chunk), e)
