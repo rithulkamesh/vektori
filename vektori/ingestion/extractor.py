@@ -382,11 +382,16 @@ class FactExtractor:
         user_id: str,
         agent_id: str | None = None,
         session_time: datetime | None = None,
+        _inserted_facts_out: list[tuple[str, str]] | None = None,
     ) -> int:
         """
         Insert pre-extracted facts from the session cache. No LLM call.
         Re-embeds fact texts (local model, cheap) so embeddings are fresh.
         Used by the benchmark runner for cache-hit sessions.
+
+        _inserted_facts_out: if provided, (fact_id, text) pairs for every
+        successfully inserted fact are appended — used by the caller to
+        drive episode extraction after replay.
         """
         if not cached_facts:
             return 0
@@ -425,6 +430,9 @@ class FactExtractor:
                     event_time=session_time,
                 )
                 facts_inserted += 1
+
+                if _inserted_facts_out is not None:
+                    _inserted_facts_out.append((fact_id, fact_data["text"]))
 
                 source_quotes = fact_data.get("source_quotes") or []
                 if source_quotes:

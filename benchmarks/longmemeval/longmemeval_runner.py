@@ -256,7 +256,9 @@ class LongMemEvalBenchmark:
         session_date: str | None,
         cached_facts: list[dict[str, Any]],
     ) -> None:
-        """Cache hit path: store sentences locally, insert pre-extracted facts."""
+        """Cache hit path: store sentences locally, replay pre-extracted facts,
+        then run episode extraction (cheap LLM call — only facts were cached,
+        not episodes, so we generate them fresh here)."""
         pipeline = self.vektori_client._pipeline
         extractor = self.vektori_client._extractor
 
@@ -269,12 +271,32 @@ class LongMemEvalBenchmark:
             skip_extraction=True,
         )
 
+        inserted_facts: list[tuple[str, str]] = []
         await extractor.replay_facts(
             cached_facts=cached_facts,
             session_id=haystack_sid,
             user_id=user_id,
             session_time=session_time,
+            _inserted_facts_out=inserted_facts,
         )
+
+        if inserted_facts:
+            conversation = "\n".join(
+                f"{msg['role'].upper()}: {msg['content']}" for msg in session
+            )
+            try:
+                await extractor._extract_insights(
+                    inserted_facts=inserted_facts,
+                    conversation=conversation,
+                    session_id=haystack_sid,
+                    user_id=user_id,
+                    agent_id=None,
+                    session_time=session_time,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Episode extraction failed for cached session %s: %s", haystack_sid, e
+                )
 
     async def _full_ingest_session(
         self,
@@ -361,6 +383,12 @@ class LongMemEvalBenchmark:
                 if ts:
                     date_prefix = f"[{str(ts)[:10]}] "
                 lines.append(f"{i}. {date_prefix}{fact.get('text', str(fact))}")
+
+        episodes = search_results.get("insights") or []
+        if episodes:
+            lines.append("\n## Episodes")
+            for i, ep in enumerate(episodes, 1):
+                lines.append(f"{i}. {ep.get('text', str(ep))}")
 
         sentences = search_results.get("sentences") or []
         if sentences:
