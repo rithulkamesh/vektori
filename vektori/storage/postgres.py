@@ -517,6 +517,88 @@ class PostgresBackend(StorageBackend):
                 [(uuid.UUID(f), uuid.UUID(s)) for f, s in pairs],
             )
 
+    # ── Insights ──────────────────────────────────────────────────────────────
+
+    async def insert_insight(
+        self,
+        text: str,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> str:
+        insight_id = uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}::{text}")
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO insights (id, text, embedding, user_id, agent_id, session_id)
+                VALUES ($1, $2, $3::vector, $4, $5, $6)
+                ON CONFLICT DO NOTHING
+                """,
+                insight_id,
+                text,
+                _vec(embedding),
+                user_id,
+                agent_id,
+                session_id,
+            )
+        return str(insight_id)
+
+    async def insert_insight_fact(self, insight_id: str, fact_id: str) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO insight_facts (insight_id, fact_id)
+                VALUES ($1, $2)
+                ON CONFLICT DO NOTHING
+                """,
+                uuid.UUID(insight_id),
+                uuid.UUID(fact_id),
+            )
+
+    async def get_insights_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
+        if not fact_ids:
+            return []
+        uuid_ids = [uuid.UUID(fid) for fid in fact_ids]
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT i.id, i.text, i.session_id, i.created_at
+                FROM insights i
+                JOIN insight_facts if2 ON i.id = if2.insight_id
+                WHERE if2.fact_id = ANY($1::uuid[])
+                  AND i.is_active = true
+                """,
+                uuid_ids,
+            )
+        return [_row(r) for r in rows]
+
+    async def search_insights(
+        self,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, text, session_id, created_at,
+                       embedding <=> $1::vector AS distance
+                FROM insights
+                WHERE user_id = $2
+                  AND ($3::text IS NULL OR agent_id = $3)
+                  AND is_active = true
+                ORDER BY embedding <=> $1::vector
+                LIMIT $4
+                """,
+                _vec(embedding),
+                user_id,
+                agent_id,
+                limit,
+            )
+        return [_row(r) for r in rows]
+
     async def get_source_sentences(self, fact_ids: list[str]) -> list[str]:
         """Return sentence IDs that are the sources for the given facts."""
         if not fact_ids:
@@ -709,6 +791,7 @@ class PostgresBackend(StorageBackend):
                     SELECT
                         (SELECT COUNT(*) FROM sentences WHERE user_id = $1) +
                         (SELECT COUNT(*) FROM facts    WHERE user_id = $1) +
+                        (SELECT COUNT(*) FROM insights WHERE user_id = $1) +
                         (SELECT COUNT(*) FROM sessions WHERE user_id = $1) AS total
                     """,
                     user_id,
@@ -716,6 +799,7 @@ class PostgresBackend(StorageBackend):
                 total = counts["total"] if counts else 0
                 await conn.execute("DELETE FROM sentences WHERE user_id = $1", user_id)
                 await conn.execute("DELETE FROM facts    WHERE user_id = $1", user_id)
+                await conn.execute("DELETE FROM insights WHERE user_id = $1", user_id)
                 await conn.execute("DELETE FROM sessions WHERE user_id = $1", user_id)
 
         logger.info("Deleted %d rows for user %s", total, user_id)

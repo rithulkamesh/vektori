@@ -199,6 +199,55 @@ class StorageBackend(ABC):
         for fact_id, sentence_id in pairs:
             await self.insert_fact_source(fact_id, sentence_id)
 
+    # ── Insights ──
+
+    @abstractmethod
+    async def insert_insight(
+        self,
+        text: str,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> str:
+        """Insert an insight and return its UUID.
+
+        Uses a deterministic ID (uuid5 of user_id+text) so inserting the same
+        insight twice is idempotent — ON CONFLICT DO NOTHING.
+        embedding: pre-computed vector of the insight text for direct vector search.
+        """
+        ...
+
+    @abstractmethod
+    async def insert_insight_fact(self, insight_id: str, fact_id: str) -> None:
+        """Link an insight to a fact it was derived from. ON CONFLICT DO NOTHING."""
+        ...
+
+    @abstractmethod
+    async def get_insights_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
+        """Return insights linked to any of the given facts via insight_facts.
+
+        Used at retrieval time to surface L1 patterns after L0 vector search.
+        Returns insight dicts with at minimum {id, text}.
+        """
+        ...
+
+    @abstractmethod
+    async def search_insights(
+        self,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Vector search over insights for a user.
+
+        Complements graph traversal: surfaces insights from sessions whose facts
+        didn't land in the top-k but whose insight text is semantically close to
+        the query.
+        """
+        ...
+
     @abstractmethod
     async def get_source_sentences(self, fact_ids: list[str]) -> list[str]:
         """Return sentence IDs that are sources for the given facts (via fact_sources)."""

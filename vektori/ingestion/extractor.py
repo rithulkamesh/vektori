@@ -62,6 +62,36 @@ General:
 Return ONLY the JSON."""
 
 
+INSIGHTS_PROMPT = """Given this conversation and the facts extracted from it, identify higher-level insights — observations, themes, emotional context, or patterns that emerge from this session.
+
+CONVERSATION:
+{conversation}
+
+EXTRACTED FACTS (numbered):
+{facts_list}
+
+Return JSON:
+{{
+  "insights": [
+    {{
+      "text": "observation or insight under 25 words",
+      "fact_indices": [0, 2]
+    }}
+  ]
+}}
+
+Rules:
+- Insights must be grounded in THIS conversation — no speculation
+- Each insight must reference at least 1 fact via fact_indices (0-based)
+- Insights add context or perspective beyond what the raw facts say
+  GOOD: "User is switching stacks due to performance frustration, not preference"
+  BAD:  "User mentioned switching stacks"  ← that's just a fact
+- Maximum {max_insights} insights
+- Return {{"insights": []}} if nothing notable
+
+Return ONLY the JSON."""
+
+
 # ── Extractor ─────────────────────────────────────────────────────────────────
 
 class FactExtractor:
@@ -130,13 +160,27 @@ class FactExtractor:
             logger.error("Fact extraction failed for session %s: %s", session_id, e)
             return {"facts_inserted": 0, "error": str(e)}
 
+        inserted_facts: list[tuple[str, str]] = []  # (fact_id, text)
         facts_inserted = await self._process_facts(
             new_facts, session_id, user_id, agent_id, conversation, session_time,
             _capture_out=_capture_out,
+            _inserted_facts_out=inserted_facts,
         )
 
-        logger.info("Extraction complete for session %s: %d facts", session_id, facts_inserted)
-        return {"facts_inserted": facts_inserted}
+        insights_created = 0
+        if inserted_facts:
+            try:
+                insights_created = await self._extract_insights(
+                    inserted_facts, conversation, session_id, user_id, agent_id
+                )
+            except Exception as e:
+                logger.warning("Insight extraction failed for session %s: %s", session_id, e)
+
+        logger.info(
+            "Extraction complete for session %s: %d facts, %d insights",
+            session_id, facts_inserted, insights_created,
+        )
+        return {"facts_inserted": facts_inserted, "insights_created": insights_created}
 
     # ── LLM Call ──────────────────────────────────────────────────────────────
 
@@ -230,6 +274,7 @@ class FactExtractor:
         conversation: str,
         session_time: datetime | None = None,
         _capture_out: list[dict[str, Any]] | None = None,
+        _inserted_facts_out: list[tuple[str, str]] | None = None,
     ) -> int:
         """
         For each fact:
@@ -294,6 +339,9 @@ class FactExtractor:
                     event_time=session_time,
                 )
                 facts_inserted += 1
+
+                if _inserted_facts_out is not None:
+                    _inserted_facts_out.append((fact_id, fact_data["text"]))
 
                 if _capture_out is not None:
                     _capture_out.append({
@@ -424,6 +472,95 @@ class FactExtractor:
         except Exception as e:
             logger.warning("Dedup lookup failed: %s", e)
         return None
+
+    async def _extract_insights(
+        self,
+        inserted_facts: list[tuple[str, str]],
+        conversation: str,
+        session_id: str,
+        user_id: str,
+        agent_id: str | None,
+        max_insights: int = 5,
+    ) -> int:
+        """Extract per-session insights from the conversation and its facts.
+
+        Insights are higher-level observations from THIS session — themes,
+        emotional context, patterns that go beyond individual facts. They are
+        vector-embedded so they can be found both via graph traversal (fact →
+        insight_facts → insights) and direct cosine search at retrieval.
+
+        Returns the number of insights inserted.
+        """
+        if not inserted_facts:
+            return 0
+
+        facts_list = "\n".join(f"{i}. {text}" for i, (_, text) in enumerate(inserted_facts))
+        fact_id_list = [fid for fid, _ in inserted_facts]
+
+        # Truncate conversation to keep prompt manageable (~3000 chars ≈ 750 tokens)
+        conv_snippet = conversation[:3000]
+
+        prompt = INSIGHTS_PROMPT.format(
+            conversation=conv_snippet,
+            facts_list=facts_list,
+            max_insights=max_insights,
+        )
+        try:
+            response = await self.llm.generate(prompt, max_tokens=1024)
+            data = _parse_json_response(response)
+        except Exception as e:
+            logger.warning("Insight LLM call failed: %s", e)
+            return 0
+
+        raw_insights = data.get("insights", [])[:max_insights]
+        if not raw_insights:
+            return 0
+
+        # Batch embed all insight texts in one call
+        insight_texts = [(ins.get("text") or "").strip() for ins in raw_insights]
+        insight_texts = [t for t in insight_texts if t]
+        if not insight_texts:
+            return 0
+
+        try:
+            embeddings = await self.embedder.embed_batch(insight_texts)
+        except Exception as e:
+            logger.warning("Batch embed failed for insights: %s", e)
+            return 0
+
+        insights_created = 0
+        text_iter = iter(zip(insight_texts, embeddings))
+        for insight_data in raw_insights:
+            text = (insight_data.get("text") or "").strip()
+            if not text:
+                continue
+            indices = insight_data.get("fact_indices") or []
+
+            try:
+                _, embedding = next(text_iter)
+            except StopIteration:
+                break
+
+            # Map indices → fact IDs from this session's inserted facts
+            linked_ids = [
+                fact_id_list[i]
+                for i in indices
+                if isinstance(i, int) and 0 <= i < len(fact_id_list)
+            ]
+            if not linked_ids:
+                continue
+
+            try:
+                insight_id = await self.db.insert_insight(
+                    text, embedding, user_id, agent_id, session_id
+                )
+                for fid in linked_ids:
+                    await self.db.insert_insight_fact(insight_id, fid)
+                insights_created += 1
+            except Exception as e:
+                logger.warning("Failed to insert insight '%s': %s", text, e)
+
+        return insights_created
 
     async def _link_to_source_sentences(
         self,

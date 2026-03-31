@@ -32,6 +32,8 @@ class MemoryBackend(StorageBackend):
         self._edges: list[dict[str, Any]] = []
         self._fact_sources: list[dict[str, str]] = []       # [{fact_id, sentence_id}]
         self._sessions: dict[str, dict[str, Any]] = {}
+        self._insights: dict[str, dict[str, Any]] = {}
+        self._insight_facts: list[dict[str, str]] = []      # [{insight_id, fact_id}]
 
     async def initialize(self) -> None:
         pass  # Nothing to do
@@ -277,6 +279,76 @@ class MemoryBackend(StorageBackend):
 
     # ── Join tables ──
 
+    # ── Insights ──
+
+    async def insert_insight(
+        self,
+        text: str,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> str:
+        insight_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}::{text}"))
+        if insight_id not in self._insights:
+            self._insights[insight_id] = {
+                "id": insight_id,
+                "text": text,
+                "embedding": embedding,
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "is_active": True,
+                "created_at": datetime.utcnow(),
+            }
+        return insight_id
+
+    async def insert_insight_fact(self, insight_id: str, fact_id: str) -> None:
+        # Dedup: don't add the same link twice
+        for link in self._insight_facts:
+            if link["insight_id"] == insight_id and link["fact_id"] == fact_id:
+                return
+        self._insight_facts.append({"insight_id": insight_id, "fact_id": fact_id})
+
+    async def get_insights_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
+        if not fact_ids:
+            return []
+        fact_id_set = set(fact_ids)
+        matched_insight_ids = {
+            link["insight_id"]
+            for link in self._insight_facts
+            if link["fact_id"] in fact_id_set
+        }
+        return [
+            {k: v for k, v in self._insights[iid].items() if k != "embedding"}
+            for iid in matched_insight_ids
+            if iid in self._insights and self._insights[iid].get("is_active", True)
+        ]
+
+    async def search_insights(
+        self,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        results = []
+        for ins in self._insights.values():
+            if ins.get("user_id") != user_id:
+                continue
+            if agent_id and ins.get("agent_id") != agent_id:
+                continue
+            if not ins.get("is_active", True):
+                continue
+            emb = ins.get("embedding")
+            if not emb:
+                continue
+            sim = _cosine_similarity(embedding, emb)
+            row = {k: v for k, v in ins.items() if k != "embedding"}
+            results.append({**row, "distance": 1.0 - sim})
+        results.sort(key=lambda x: x["distance"])
+        return results[:limit]
+
     async def insert_fact_source(self, fact_id: str, sentence_id: str) -> None:
         self._fact_sources.append({"fact_id": fact_id, "sentence_id": sentence_id})
 
@@ -351,7 +423,7 @@ class MemoryBackend(StorageBackend):
 
     async def delete_user(self, user_id: str) -> int:
         count = 0
-        for store in [self._sentences, self._facts, self._sessions]:
+        for store in [self._sentences, self._facts, self._insights, self._sessions]:
             keys = [k for k, v in store.items() if v.get("user_id") == user_id]
             for k in keys:
                 del store[k]

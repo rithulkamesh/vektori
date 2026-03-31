@@ -28,19 +28,21 @@ async def search_with_facts():
     return pipeline, db
 
 
-async def test_l0_returns_facts_only(search_with_facts):
+async def test_l0_returns_facts_and_insights(search_with_facts):
     pipeline, db = search_with_facts
     results = await pipeline.search("communication preference", "u1", depth="l0")
     assert "facts" in results
-    assert "insights" not in results
+    assert "insights" in results
+    assert isinstance(results["insights"], list)
     assert len(results["facts"]) >= 1
 
 
-async def test_l1_returns_facts_and_sentences(search_with_facts):
+async def test_l1_returns_facts_insights_and_sentences(search_with_facts):
     pipeline, db = search_with_facts
     results = await pipeline.search("communication preference", "u1", depth="l1")
     assert "facts" in results
-    assert "insights" not in results
+    assert "insights" in results
+    assert isinstance(results["insights"], list)
     assert len(results["facts"]) >= 1
 
 

@@ -24,10 +24,11 @@ class SearchPipeline:
         Vector search over facts. Entry point for all retrieval.
         Facts are short and crisp → best cosine match for direct queries.
 
-    L1 — Facts + Source Sentences (~300-800 tokens):
-        Facts + the exact sentences each fact was extracted from (via fact_sources).
-        No context expansion — just the precise moments in conversation that produced
-        the facts. This is the default depth.
+    L1 — Facts + Insights + Source Sentences (~300-800 tokens):
+        Facts + cross-session insights linked to those facts (via insight_facts graph
+        traversal) + the exact sentences each fact was extracted from (via fact_sources).
+        Insights are always returned at every depth; sentences require l1 or l2.
+        This is the default depth.
 
     L2 — Full story (~1000-3000 tokens):
         Everything in L1, plus full session context window (±N sentences around
@@ -101,6 +102,7 @@ class SearchPipeline:
         Returns:
             {
               "facts":        list[dict],  # always present
+              "insights":     list[dict],  # always present — cross-session patterns linked to matched facts
               "sentences":    list[dict],  # l1, l2 only
               "memory_found": bool,        # False when no facts passed min_score (abstention signal)
             }
@@ -191,8 +193,8 @@ class SearchPipeline:
                 "search: no facts for user=%s, falling back to sentence search", user_id
             )
             if depth == "l0":
-                return {"facts": [], "memory_found": False}
-            return {"facts": [], "sentences": direct_sentences, "memory_found": False}
+                return {"facts": [], "insights": [], "memory_found": False}
+            return {"facts": [], "insights": [], "sentences": direct_sentences, "memory_found": False}
 
         scored_facts = score_and_rank(
             seed_facts,
@@ -208,15 +210,35 @@ class SearchPipeline:
             for f in scored_facts[:top_k]:
                 logger.debug(explain_score(f))
 
-        if depth == "l0":
-            top = _clean(scored_facts[:top_k])
-            return {"facts": top, "memory_found": len(top) > 0}
+        top_k_facts = scored_facts[:top_k]
+        seed_fact_ids = [f["id"] for f in top_k_facts]
 
-        # ── Step 2: Trace facts → source sentences ────────────────────────────
-        seed_fact_ids = [f["id"] for f in scored_facts[:top_k]]
+        if depth == "l0":
+            # L0: graph traversal only — keep it light
+            insights = await self.db.get_insights_for_facts(seed_fact_ids)
+            top = _clean(top_k_facts)
+            return {"facts": top, "insights": insights, "memory_found": len(top) > 0}
+
+        # ── Step 2: Insights (L1/L2) — graph traversal + vector search ────────
+        # Run both concurrently: graph edges from matched facts, and direct
+        # cosine search over insight embeddings. Merge by ID so the same
+        # insight doesn't appear twice.
+        graph_insights, vec_insights = await asyncio.gather(
+            self.db.get_insights_for_facts(seed_fact_ids),
+            self.db.search_insights(query_embedding, user_id, agent_id),
+        )
+        seen_insight_ids: set[str] = set()
+        insights: list[dict[str, Any]] = []
+        for ins in (*graph_insights, *vec_insights):
+            iid = ins.get("id")
+            if iid and iid not in seen_insight_ids:
+                seen_insight_ids.add(iid)
+                insights.append(ins)
+
+        # ── Step 3: Trace facts → source sentences ────────────────────────────
         source_sentence_ids = await self.db.get_source_sentences(seed_fact_ids)
 
-        top_facts = _clean(scored_facts[:top_k])
+        top_facts = _clean(top_k_facts)
         memory_found = len(top_facts) > 0
 
         # ── Step 4: Session scoring — merge direct search + fact-linked ───────
@@ -240,6 +262,7 @@ class SearchPipeline:
         if not all_candidate_ids:
             return {
                 "facts": top_facts,
+                "insights": insights,
                 "sentences": [],
                 "memory_found": memory_found,
             }
@@ -292,6 +315,7 @@ class SearchPipeline:
 
         return {
             "facts": top_facts,
+            "insights": insights,
             "sentences": _dedup(result_sentences),
             "memory_found": memory_found,
         }
@@ -337,9 +361,23 @@ class SearchPipeline:
                 logger.debug(explain_score(f))
 
         top_facts = _clean(scored_facts[:top_k])
+        top_fact_ids = [f["id"] for f in top_facts]
+
+        graph_insights, vec_insights = await asyncio.gather(
+            self.db.get_insights_for_facts(top_fact_ids),
+            self.db.search_insights(query_embedding, user_id, agent_id),
+        )
+        seen_insight_ids: set[str] = set()
+        insights: list[dict[str, Any]] = []
+        for ins in (*graph_insights, *vec_insights):
+            iid = ins.get("id")
+            if iid and iid not in seen_insight_ids:
+                seen_insight_ids.add(iid)
+                insights.append(ins)
 
         return {
             "facts": top_facts,
+            "insights": insights,
             "sentences": _dedup(raw.get("sentences", [])),
             "memory_found": len(top_facts) > 0,
         }
@@ -409,7 +447,7 @@ class SearchPipeline:
 
         if not merged_facts:
             logger.debug("search_expanded: no facts found, falling back to sentence search")
-            return {"facts": [], "sentences": direct_sentences, "memory_found": False}
+            return {"facts": [], "insights": [], "sentences": direct_sentences, "memory_found": False}
 
         # Score the merged set
         scored_facts = score_and_rank(
@@ -428,7 +466,18 @@ class SearchPipeline:
         top_facts = scored_facts[:top_k]
         fact_ids = [f["id"] for f in top_facts]
 
-        source_sentence_ids = await self.db.get_source_sentences(fact_ids)
+        graph_insights, vec_insights, source_sentence_ids = await asyncio.gather(
+            self.db.get_insights_for_facts(fact_ids),
+            self.db.search_insights(embeddings[0], user_id, agent_id),
+            self.db.get_source_sentences(fact_ids),
+        )
+        seen_insight_ids: set[str] = set()
+        insights: list[dict[str, Any]] = []
+        for ins in (*graph_insights, *vec_insights):
+            iid = ins.get("id")
+            if iid and iid not in seen_insight_ids:
+                seen_insight_ids.add(iid)
+                insights.append(ins)
 
         # Session scoring: merge direct search + fact-linked sentences
         direct_sent_by_id: dict[str, dict[str, Any]] = {s["id"]: s for s in direct_sentences}
@@ -479,6 +528,7 @@ class SearchPipeline:
 
         return {
             "facts": _clean(top_facts),
+            "insights": insights,
             "sentences": _dedup(result_sentences),
             "memory_found": len(top_facts) > 0,
         }
@@ -500,7 +550,7 @@ class SearchPipeline:
         since they're stored synchronously in add().
         """
         if depth == "l0":
-            return {"facts": [], "memory_found": False}
+            return {"facts": [], "insights": [], "memory_found": False}
 
         sentences = await self.db.search_sentences(
             embedding=query_embedding,
@@ -508,14 +558,14 @@ class SearchPipeline:
             agent_id=agent_id,
             limit=top_k,
         )
-        return {"facts": [], "sentences": sentences, "memory_found": False}
+        return {"facts": [], "insights": [], "sentences": sentences, "memory_found": False}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _empty(depth: str) -> dict[str, Any]:
     """Return the correct empty structure for a given depth."""
-    result: dict[str, Any] = {"facts": []}
+    result: dict[str, Any] = {"facts": [], "insights": []}
     if depth in ("l1", "l2"):
         result["sentences"] = []
     return result
