@@ -56,9 +56,10 @@ plans/
 Thumbs.db
 CODEBASE_MAP.md
 .claude/settings.local.json
-benchmark_results/longmemeval_s_run_full_results.json
-benchmark_results/longmemeval_s_run_summary.json
-benchmark_results/.cache/
+benchmark_results/
 og_benchmark_results/
+dashboards/
+data/*.json
 data/longmemeval_s_cleaned.json
 ISSUES.md
+.tmp_checkpoint_analysis*.py
