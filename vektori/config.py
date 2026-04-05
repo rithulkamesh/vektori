@@ -28,7 +28,7 @@ class VektoriConfig:
     embedding_model: str = "openai:text-embedding-3-small"
     embedding_dimension: int = 1536
 
-    # LLM provider for fact + insight extraction
+    # LLM provider for fact + episode extraction
     extraction_model: str = "openai:gpt-4o-mini"
 
     # Quality filtering

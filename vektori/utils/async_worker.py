@@ -1,4 +1,4 @@
-"""Token-threshold batched background worker for LLM fact + insight extraction."""
+"""Token-threshold batched background worker for LLM fact + episode extraction."""
 
 from __future__ import annotations
 

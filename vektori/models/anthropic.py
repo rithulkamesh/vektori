@@ -52,7 +52,7 @@ class AnthropicEmbedder(EmbeddingProvider):
 
 
 class AnthropicLLM(LLMProvider):
-    """Anthropic Claude for fact + insight extraction."""
+    """Anthropic Claude for fact + episode extraction."""
 
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         self.model = model or DEFAULT_LLM_MODEL

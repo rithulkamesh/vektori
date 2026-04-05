@@ -130,36 +130,36 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
 
 
 -- ============================================================
--- INSIGHTS: The middle layer (L1). LLM-inferred cross-session patterns.
--- Not vector-searched — discovered via graph traversal from matched facts.
+-- EPISODES: The middle layer (L1). LLM-generated episodic memory narratives.
+-- Discovered via graph traversal from matched facts, also directly vector-searched.
 -- ============================================================
-CREATE TABLE IF NOT EXISTS insights (
+CREATE TABLE IF NOT EXISTS episodes (
     id UUID PRIMARY KEY,
     text TEXT NOT NULL,
     embedding vector(1536),               -- for direct vector search at retrieval
     user_id TEXT NOT NULL,
     agent_id TEXT,
-    session_id TEXT,                       -- session this insight came from
+    session_id TEXT,                       -- session this episode came from
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_insights_user ON insights (user_id);
-CREATE INDEX IF NOT EXISTS idx_insights_embedding ON insights
+CREATE INDEX IF NOT EXISTS idx_episodes_user ON episodes (user_id);
+CREATE INDEX IF NOT EXISTS idx_episodes_embedding ON episodes
     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
--- Dedup: same insight text for same user is idempotent
-CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_user_text ON insights (user_id, text);
+-- Dedup: same episode text for same user is idempotent
+CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_user_text ON episodes (user_id, text);
 
 
 -- ============================================================
--- INSIGHT_FACTS: Links insights (L1) to the facts (L0) they were derived from.
--- Graph edge: traversed after L0 vector search to surface patterns.
+-- EPISODE_FACTS: Links episodes (L1) to the facts (L0) they were derived from.
+-- Graph edge: traversed after L0 vector search to surface episodes.
 -- ============================================================
-CREATE TABLE IF NOT EXISTS insight_facts (
-    insight_id UUID NOT NULL REFERENCES insights(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS episode_facts (
+    episode_id UUID NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
     fact_id UUID NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
-    PRIMARY KEY (insight_id, fact_id)
+    PRIMARY KEY (episode_id, fact_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_insight_facts_insight ON insight_facts (insight_id);
-CREATE INDEX IF NOT EXISTS idx_insight_facts_fact ON insight_facts (fact_id);
+CREATE INDEX IF NOT EXISTS idx_episode_facts_episode ON episode_facts (episode_id);
+CREATE INDEX IF NOT EXISTS idx_episode_facts_fact ON episode_facts (fact_id);

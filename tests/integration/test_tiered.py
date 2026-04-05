@@ -48,14 +48,14 @@ async def populated_pipeline():
 async def test_l0_depth(populated_pipeline):
     results = await populated_pipeline.search("WhatsApp preference", "u1", depth="l0")
     assert "facts" in results
-    assert "insights" in results
+    assert "episodes" in results
     assert "sentences" not in results
 
 
 async def test_l1_depth(populated_pipeline):
     results = await populated_pipeline.search("WhatsApp preference", "u1", depth="l1")
     assert "facts" in results
-    assert "insights" in results
+    assert "episodes" in results
     assert "sentences" in results  # L1 returns source sentences (exact origin of each fact)
 
 

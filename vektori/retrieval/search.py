@@ -24,10 +24,10 @@ class SearchPipeline:
         Vector search over facts. Entry point for all retrieval.
         Facts are short and crisp → best cosine match for direct queries.
 
-    L1 — Facts + Insights + Source Sentences (~300-800 tokens):
-        Facts + cross-session insights linked to those facts (via insight_facts graph
+    L1 — Facts + Episodes + Source Sentences (~300-800 tokens):
+        Facts + cross-session episodes linked to those facts (via episode_facts graph
         traversal) + the exact sentences each fact was extracted from (via fact_sources).
-        Insights are always returned at every depth; sentences require l1 or l2.
+        Episodes are always returned at every depth; sentences require l1 or l2.
         This is the default depth.
 
     L2 — Full story (~1000-3000 tokens):
@@ -90,7 +90,7 @@ class SearchPipeline:
             user_id: Whose memories to search.
             agent_id: Optional agent scoping. None means search all agents.
             depth: "l0" | "l1" | "l2". Invalid values raise ValueError.
-            top_k: Max facts to return. Insights and sentences are not capped
+            top_k: Max facts to return. Episodes and sentences are not capped
                    here — they're derived from the returned facts and bounded
                    by how many links exist in the graph.
             context_window: ±N sentences around each source sentence (L2 only).
@@ -103,7 +103,7 @@ class SearchPipeline:
         Returns:
             {
               "facts":        list[dict],  # always present
-              "insights":     list[dict],  # always present — cross-session patterns linked to matched facts
+              "episodes":     list[dict],  # always present — cross-session patterns linked to matched facts
               "sentences":    list[dict],  # l1, l2 only
               "memory_found": bool,        # False when no facts passed min_score (abstention signal)
             }
@@ -206,10 +206,10 @@ class SearchPipeline:
         if not seed_facts:
             logger.debug("search: no facts for user=%s, falling back to sentence search", user_id)
             if depth == "l0":
-                return {"facts": [], "insights": [], "memory_found": False}
+                return {"facts": [], "episodes": [], "memory_found": False}
             return {
                 "facts": [],
-                "insights": [],
+                "episodes": [],
                 "sentences": direct_sentences,
                 "memory_found": False,
             }
@@ -233,25 +233,25 @@ class SearchPipeline:
 
         if depth == "l0":
             # L0: graph traversal only — keep it light
-            insights = await self.db.get_insights_for_facts(seed_fact_ids)
+            episodes = await self.db.get_episodes_for_facts(seed_fact_ids)
             top = _clean(top_k_facts)
-            return {"facts": top, "insights": insights, "memory_found": len(top) > 0}
+            return {"facts": top, "episodes": episodes, "memory_found": len(top) > 0}
 
-        # ── Step 2: Insights (L1/L2) — graph traversal + vector search ────────
+        # ── Step 2: Episodes (L1/L2) — graph traversal + vector search ────────
         # Run both concurrently: graph edges from matched facts, and direct
-        # cosine search over insight embeddings. Merge by ID so the same
-        # insight doesn't appear twice.
-        graph_insights, vec_insights = await asyncio.gather(
-            self.db.get_insights_for_facts(seed_fact_ids),
-            self.db.search_insights(query_embedding, user_id, agent_id),
+        # cosine search over episode embeddings. Merge by ID so the same
+        # episode doesn't appear twice.
+        graph_episodes, vec_episodes = await asyncio.gather(
+            self.db.get_episodes_for_facts(seed_fact_ids),
+            self.db.search_episodes(query_embedding, user_id, agent_id),
         )
-        seen_insight_ids: set[str] = set()
-        insights: list[dict[str, Any]] = []
-        for ins in (*graph_insights, *vec_insights):
+        seen_episode_ids: set[str] = set()
+        episodes: list[dict[str, Any]] = []
+        for ins in (*graph_episodes, *vec_episodes):
             iid = ins.get("id")
-            if iid and iid not in seen_insight_ids:
-                seen_insight_ids.add(iid)
-                insights.append(ins)
+            if iid and iid not in seen_episode_ids:
+                seen_episode_ids.add(iid)
+                episodes.append(ins)
 
         # ── Step 3: Trace facts → source sentences ────────────────────────────
         source_sentence_ids = await self.db.get_source_sentences(seed_fact_ids)
@@ -284,7 +284,7 @@ class SearchPipeline:
         if not all_candidate_ids:
             return {
                 "facts": top_facts,
-                "insights": insights,
+                "episodes": episodes,
                 "sentences": [],
                 "memory_found": memory_found,
             }
@@ -337,7 +337,7 @@ class SearchPipeline:
 
         return {
             "facts": top_facts,
-            "insights": insights,
+            "episodes": episodes,
             "sentences": _dedup(result_sentences),
             "memory_found": memory_found,
         }
@@ -385,21 +385,21 @@ class SearchPipeline:
         top_facts = _clean(scored_facts[:top_k])
         top_fact_ids = [f["id"] for f in top_facts]
 
-        graph_insights, vec_insights = await asyncio.gather(
-            self.db.get_insights_for_facts(top_fact_ids),
-            self.db.search_insights(query_embedding, user_id, agent_id),
+        graph_episodes, vec_episodes = await asyncio.gather(
+            self.db.get_episodes_for_facts(top_fact_ids),
+            self.db.search_episodes(query_embedding, user_id, agent_id),
         )
-        seen_insight_ids: set[str] = set()
-        insights: list[dict[str, Any]] = []
-        for ins in (*graph_insights, *vec_insights):
+        seen_episode_ids: set[str] = set()
+        episodes: list[dict[str, Any]] = []
+        for ins in (*graph_episodes, *vec_episodes):
             iid = ins.get("id")
-            if iid and iid not in seen_insight_ids:
-                seen_insight_ids.add(iid)
-                insights.append(ins)
+            if iid and iid not in seen_episode_ids:
+                seen_episode_ids.add(iid)
+                episodes.append(ins)
 
         return {
             "facts": top_facts,
-            "insights": insights,
+            "episodes": episodes,
             "sentences": _dedup(raw.get("sentences", [])),
             "memory_found": len(top_facts) > 0,
         }
@@ -473,7 +473,7 @@ class SearchPipeline:
             logger.debug("search_expanded: no facts found, falling back to sentence search")
             return {
                 "facts": [],
-                "insights": [],
+                "episodes": [],
                 "sentences": direct_sentences,
                 "memory_found": False,
             }
@@ -495,18 +495,18 @@ class SearchPipeline:
         top_facts = scored_facts[:top_k]
         fact_ids = [f["id"] for f in top_facts]
 
-        graph_insights, vec_insights, source_sentence_ids = await asyncio.gather(
-            self.db.get_insights_for_facts(fact_ids),
-            self.db.search_insights(embeddings[0], user_id, agent_id),
+        graph_episodes, vec_episodes, source_sentence_ids = await asyncio.gather(
+            self.db.get_episodes_for_facts(fact_ids),
+            self.db.search_episodes(embeddings[0], user_id, agent_id),
             self.db.get_source_sentences(fact_ids),
         )
-        seen_insight_ids: set[str] = set()
-        insights: list[dict[str, Any]] = []
-        for ins in (*graph_insights, *vec_insights):
+        seen_episode_ids: set[str] = set()
+        episodes: list[dict[str, Any]] = []
+        for ins in (*graph_episodes, *vec_episodes):
             iid = ins.get("id")
-            if iid and iid not in seen_insight_ids:
-                seen_insight_ids.add(iid)
-                insights.append(ins)
+            if iid and iid not in seen_episode_ids:
+                seen_episode_ids.add(iid)
+                episodes.append(ins)
 
         # Session scoring: merge direct search + fact-linked sentences
         direct_sent_by_id: dict[str, dict[str, Any]] = {s["id"]: s for s in direct_sentences}
@@ -561,7 +561,7 @@ class SearchPipeline:
 
         return {
             "facts": _clean(top_facts),
-            "insights": insights,
+            "episodes": episodes,
             "sentences": _dedup(result_sentences),
             "memory_found": len(top_facts) > 0,
         }
@@ -583,7 +583,7 @@ class SearchPipeline:
         since they're stored synchronously in add().
         """
         if depth == "l0":
-            return {"facts": [], "insights": [], "memory_found": False}
+            return {"facts": [], "episodes": [], "memory_found": False}
 
         sentences = await self.db.search_sentences(
             embedding=query_embedding,
@@ -591,7 +591,7 @@ class SearchPipeline:
             agent_id=agent_id,
             limit=top_k,
         )
-        return {"facts": [], "insights": [], "sentences": sentences, "memory_found": False}
+        return {"facts": [], "episodes": [], "sentences": sentences, "memory_found": False}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -599,7 +599,7 @@ class SearchPipeline:
 
 def _empty(depth: str) -> dict[str, Any]:
     """Return the correct empty structure for a given depth."""
-    result: dict[str, Any] = {"facts": [], "insights": []}
+    result: dict[str, Any] = {"facts": [], "episodes": []}
     if depth in ("l1", "l2"):
         result["sentences"] = []
     return result

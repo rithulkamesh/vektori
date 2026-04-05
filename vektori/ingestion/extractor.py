@@ -62,7 +62,7 @@ General:
 Return ONLY the JSON."""
 
 
-INSIGHTS_PROMPT = """You are writing episodic memory records. Given this conversation and the facts extracted from it, write a concise third-person narrative episode describing what happened.
+EPISODES_PROMPT = """You are writing episodic memory records. Given this conversation and the facts extracted from it, write a concise third-person narrative episode describing what happened.
 
 {session_date_line}CONVERSATION:
 {conversation}
@@ -91,7 +91,7 @@ Rules:
   GOOD: "On 2025-08-20, the user reported sustaining a Grade II ankle sprain during a badminton session. A doctor confirmed the diagnosis and provided preliminary treatment. The user requested a recovery plan."
   BAD:  "User seems to be dealing with a sports injury" ← that is a theme, not an episode
   BAD:  "User said X, assistant said Y" ← that is a transcript summary, not an episode
-- One episode per distinct topic in the batch; {max_insights} maximum
+- One episode per distinct topic in the batch; {max_episodes} maximum
 - Return {{"episodes": []}} if nothing notable
 
 Return ONLY the JSON."""
@@ -176,10 +176,10 @@ class FactExtractor:
             _inserted_facts_out=inserted_facts,
         )
 
-        insights_created = 0
+        episodes_created = 0
         if inserted_facts:
             try:
-                insights_created = await self._extract_insights(
+                episodes_created = await self._extract_episodes(
                     inserted_facts,
                     conversation,
                     session_id,
@@ -188,15 +188,15 @@ class FactExtractor:
                     session_time=session_time,
                 )
             except Exception as e:
-                logger.warning("Insight extraction failed for session %s: %s", session_id, e)
+                logger.warning("Episode extraction failed for session %s: %s", session_id, e)
 
         logger.info(
-            "Extraction complete for session %s: %d facts, %d insights",
+            "Extraction complete for session %s: %d facts, %d episodes",
             session_id,
             facts_inserted,
-            insights_created,
+            episodes_created,
         )
-        return {"facts_inserted": facts_inserted, "insights_created": insights_created}
+        return {"facts_inserted": facts_inserted, "episodes_created": episodes_created}
 
     # ── LLM Call ──────────────────────────────────────────────────────────────
 
@@ -504,14 +504,14 @@ class FactExtractor:
             logger.warning("Dedup lookup failed: %s", e)
         return None
 
-    async def _extract_insights(
+    async def _extract_episodes(
         self,
         inserted_facts: list[tuple[str, str]],
         conversation: str,
         session_id: str,
         user_id: str,
         agent_id: str | None,
-        max_insights: int = 5,
+        max_episodes: int = 5,
         session_time: datetime | None = None,
     ) -> int:
         """Extract episodic memory narratives from the conversation and its facts.
@@ -519,7 +519,7 @@ class FactExtractor:
         Episodes are concise third-person narratives of what happened in this
         session batch — grounded stories with resolved entities and dates. They
         are vector-embedded so they can be found both via graph traversal (fact →
-        insight_facts → insights) and direct cosine search at retrieval.
+        episode_facts → episodes) and direct cosine search at retrieval.
 
         Returns the number of episodes inserted.
         """
@@ -535,42 +535,42 @@ class FactExtractor:
         session_date_line = (
             f"SESSION DATE: {session_time.strftime('%Y-%m-%d')}\n\n" if session_time else ""
         )
-        prompt = INSIGHTS_PROMPT.format(
+        prompt = EPISODES_PROMPT.format(
             conversation=conv_snippet,
             facts_list=facts_list,
-            max_insights=max_insights,
+            max_episodes=max_episodes,
             session_date_line=session_date_line,
         )
         try:
             response = await self.llm.generate(prompt, max_tokens=1024)
             data = _parse_json_response(response)
         except Exception as e:
-            logger.warning("Insight LLM call failed: %s", e)
+            logger.warning("Episode LLM call failed: %s", e)
             return 0
 
-        raw_insights = data.get("episodes", data.get("insights", []))[:max_insights]
-        if not raw_insights:
+        raw_episodes = data.get("episodes", [])[:max_episodes]
+        if not raw_episodes:
             return 0
 
-        # Batch embed all insight texts in one call
-        insight_texts = [(ins.get("text") or "").strip() for ins in raw_insights]
-        insight_texts = [t for t in insight_texts if t]
-        if not insight_texts:
+        # Batch embed all episode texts in one call
+        episode_texts = [(ep.get("text") or "").strip() for ep in raw_episodes]
+        episode_texts = [t for t in episode_texts if t]
+        if not episode_texts:
             return 0
 
         try:
-            embeddings = await self.embedder.embed_batch(insight_texts)
+            embeddings = await self.embedder.embed_batch(episode_texts)
         except Exception as e:
-            logger.warning("Batch embed failed for insights: %s", e)
+            logger.warning("Batch embed failed for episodes: %s", e)
             return 0
 
-        insights_created = 0
-        text_iter = iter(zip(insight_texts, embeddings))
-        for insight_data in raw_insights:
-            text = (insight_data.get("text") or "").strip()
+        episodes_created = 0
+        text_iter = iter(zip(episode_texts, embeddings))
+        for episode_data in raw_episodes:
+            text = (episode_data.get("text") or "").strip()
             if not text:
                 continue
-            indices = insight_data.get("fact_indices") or []
+            indices = episode_data.get("fact_indices") or []
 
             try:
                 _, embedding = next(text_iter)
@@ -587,16 +587,16 @@ class FactExtractor:
                 continue
 
             try:
-                insight_id = await self.db.insert_insight(
+                episode_id = await self.db.insert_episode(
                     text, embedding, user_id, agent_id, session_id
                 )
                 for fid in linked_ids:
-                    await self.db.insert_insight_fact(insight_id, fid)
-                insights_created += 1
+                    await self.db.insert_episode_fact(episode_id, fid)
+                episodes_created += 1
             except Exception as e:
-                logger.warning("Failed to insert insight '%s': %s", text, e)
+                logger.warning("Failed to insert episode '%s': %s", text, e)
 
-        return insights_created
+        return episodes_created
 
     async def _link_to_source_sentences(
         self,

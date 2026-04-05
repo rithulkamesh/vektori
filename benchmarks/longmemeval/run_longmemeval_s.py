@@ -76,7 +76,7 @@ async def main():
         extraction_model="gemini:gemini-2.5-flash-lite",
         
         # Retrieval
-        retrieval_depth=args.depth,  # L0=facts, L1=insights, L2=full
+        retrieval_depth=args.depth,  # L0=facts, L1=episodes, L2=full
         top_k=10,
         context_window=3,
         
@@ -100,7 +100,7 @@ async def main():
     print(f"   Dataset:      {config.dataset_name}")
     print(f"   Embedding:    {config.embedding_model} (local, no API key)")
     print(f"   Extraction:   {config.extraction_model}")
-    print(f"   Depth:        {config.retrieval_depth} (facts + insights)")
+    print(f"   Depth:        {config.retrieval_depth} (facts + episodes)")
     print(f"   Batch Size:   {config.batch_size}")
     print(f"   Workers:      {config.max_workers}")
     print(f"   Storage:      {config.storage_backend}")

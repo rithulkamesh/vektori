@@ -17,7 +17,7 @@ class Vektori:
 
     Stores conversational context in a three-layer sentence graph:
       L0 — Facts: primary vector search surface (short, crisp, LLM-extracted)
-      L1 — Insights: cross-session patterns, discovered via graph traversal
+      L1 — Episodes: cross-session narratives, discovered via graph traversal
       L2 — Sentences: raw conversation with sequential NEXT edges
 
     Usage:
@@ -131,7 +131,7 @@ class Vektori:
           split → quality filter → embed → upsert sentences + NEXT edges
 
         Async path (background — user does NOT wait):
-          LLM fact + insight extraction → conflict resolution → store facts/insights
+          LLM fact + episode extraction → conflict resolution → store facts/episodes
 
         Args:
             messages: [{"role": "user"|"assistant", "content": "..."}]

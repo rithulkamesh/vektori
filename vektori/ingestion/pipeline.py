@@ -23,7 +23,7 @@ class IngestionPipeline:
       → upsert sentences + NEXT edges → upsert session
 
     Asynchronous (background, user does NOT wait):
-      LLM fact + insight extraction via ExtractionWorker (debounced, batched)
+      LLM fact + episode extraction via ExtractionWorker (debounced, batched)
 
     If async_extraction=False, extraction runs inline (slower, for tests/simple use cases).
     """

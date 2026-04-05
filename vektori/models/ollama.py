@@ -62,7 +62,7 @@ class OllamaEmbedder(EmbeddingProvider):
 
 class OllamaLLM(LLMProvider):
     """
-    Ollama local LLM for fact + insight extraction.
+    Ollama local LLM for fact + episode extraction.
 
     Prerequisites:
         ollama pull llama3

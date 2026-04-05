@@ -515,9 +515,9 @@ class PostgresBackend(StorageBackend):
                 [(uuid.UUID(f), uuid.UUID(s)) for f, s in pairs],
             )
 
-    # ── Insights ──────────────────────────────────────────────────────────────
+    # ── Episodes ──────────────────────────────────────────────────────────────
 
-    async def insert_insight(
+    async def insert_episode(
         self,
         text: str,
         embedding: list[float],
@@ -525,53 +525,53 @@ class PostgresBackend(StorageBackend):
         agent_id: str | None = None,
         session_id: str | None = None,
     ) -> str:
-        insight_id = uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}::{text}")
+        episode_id = uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}::{text}")
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO insights (id, text, embedding, user_id, agent_id, session_id)
+                INSERT INTO episodes (id, text, embedding, user_id, agent_id, session_id)
                 VALUES ($1, $2, $3::vector, $4, $5, $6)
                 ON CONFLICT DO NOTHING
                 """,
-                insight_id,
+                episode_id,
                 text,
                 _vec(embedding),
                 user_id,
                 agent_id,
                 session_id,
             )
-        return str(insight_id)
+        return str(episode_id)
 
-    async def insert_insight_fact(self, insight_id: str, fact_id: str) -> None:
+    async def insert_episode_fact(self, episode_id: str, fact_id: str) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO insight_facts (insight_id, fact_id)
+                INSERT INTO episode_facts (episode_id, fact_id)
                 VALUES ($1, $2)
                 ON CONFLICT DO NOTHING
                 """,
-                uuid.UUID(insight_id),
+                uuid.UUID(episode_id),
                 uuid.UUID(fact_id),
             )
 
-    async def get_insights_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
+    async def get_episodes_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
         if not fact_ids:
             return []
         uuid_ids = [uuid.UUID(fid) for fid in fact_ids]
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT DISTINCT i.id, i.text, i.session_id, i.created_at
-                FROM insights i
-                JOIN insight_facts if2 ON i.id = if2.insight_id
-                WHERE if2.fact_id = ANY($1::uuid[])
-                  AND i.is_active = true
+                SELECT DISTINCT e.id, e.text, e.session_id, e.created_at
+                FROM episodes e
+                JOIN episode_facts ef2 ON e.id = ef2.episode_id
+                WHERE ef2.fact_id = ANY($1::uuid[])
+                  AND e.is_active = true
                 """,
                 uuid_ids,
             )
         return [_row(r) for r in rows]
 
-    async def search_insights(
+    async def search_episodes(
         self,
         embedding: list[float],
         user_id: str,
@@ -583,7 +583,7 @@ class PostgresBackend(StorageBackend):
                 """
                 SELECT id, text, session_id, created_at,
                        embedding <=> $1::vector AS distance
-                FROM insights
+                FROM episodes
                 WHERE user_id = $2
                   AND ($3::text IS NULL OR agent_id = $3)
                   AND is_active = true
@@ -712,14 +712,14 @@ class PostgresBackend(StorageBackend):
                 LIMIT $6
             ),
 
-            -- Step 2: Insights linked to matched facts (L1)
-            -- Graph traversal via insight_facts — NOT vector search.
-            related_insights AS (
-                SELECT DISTINCT i.id, i.text, i.confidence, i.created_at, i.metadata
-                FROM insights i
-                INNER JOIN insight_facts inf ON i.id = inf.insight_id
-                WHERE inf.fact_id IN (SELECT id FROM seed_facts)
-                  AND i.is_active = true
+            -- Step 2: Episodes linked to matched facts (L1)
+            -- Graph traversal via episode_facts — NOT vector search.
+            related_episodes AS (
+                SELECT DISTINCT e.id, e.text, e.confidence, e.created_at, e.metadata
+                FROM episodes e
+                INNER JOIN episode_facts ef ON e.id = ef.episode_id
+                WHERE ef.fact_id IN (SELECT id FROM seed_facts)
+                  AND e.is_active = true
             ),
 
             -- Step 3: Source sentences for matched facts
@@ -750,9 +750,9 @@ class PostgresBackend(StorageBackend):
                               metadata::text, distance
             FROM seed_facts
             UNION ALL
-            SELECT 'insight'  AS layer, id, text, confidence, NULL::integer AS mentions, created_at,
+            SELECT 'episode'  AS layer, id, text, confidence, NULL::integer AS mentions, created_at,
                               metadata::text, NULL AS distance
-            FROM related_insights
+            FROM related_episodes
             UNION ALL
             SELECT 'sentence' AS layer, id, text, NULL AS confidence, NULL::integer AS mentions, created_at,
                               NULL AS metadata, NULL AS distance
@@ -780,10 +780,11 @@ class PostgresBackend(StorageBackend):
             layer = d.pop("layer")
             if layer == "fact":
                 facts.append(d)
-            else:
+            elif layer == "sentence":
                 d.pop("distance", None)
                 d.pop("confidence", None)
                 sentences.append(d)
+            # episode rows are retrieved separately via get_episodes_for_facts
 
         return {"facts": facts, "sentences": sentences}
 
@@ -803,7 +804,7 @@ class PostgresBackend(StorageBackend):
                     SELECT
                         (SELECT COUNT(*) FROM sentences WHERE user_id = $1) +
                         (SELECT COUNT(*) FROM facts    WHERE user_id = $1) +
-                        (SELECT COUNT(*) FROM insights WHERE user_id = $1) +
+                        (SELECT COUNT(*) FROM episodes WHERE user_id = $1) +
                         (SELECT COUNT(*) FROM sessions WHERE user_id = $1) AS total
                     """,
                     user_id,
@@ -811,7 +812,7 @@ class PostgresBackend(StorageBackend):
                 total = counts["total"] if counts else 0
                 await conn.execute("DELETE FROM sentences WHERE user_id = $1", user_id)
                 await conn.execute("DELETE FROM facts    WHERE user_id = $1", user_id)
-                await conn.execute("DELETE FROM insights WHERE user_id = $1", user_id)
+                await conn.execute("DELETE FROM episodes WHERE user_id = $1", user_id)
                 await conn.execute("DELETE FROM sessions WHERE user_id = $1", user_id)
 
         logger.info("Deleted %d rows for user %s", total, user_id)

@@ -30,14 +30,14 @@ async def chat_with_memory(user_id: str):
         # 1. Retrieve relevant memories
         memory = await v.search(query=user_input, user_id=user_id, depth="l1")
         facts_context = "\n".join(f"- {f['text']}" for f in memory.get("facts", []))
-        insights_context = "\n".join(f"- {i['text']}" for i in memory.get("insights", []))
+        episodes_context = "\n".join(f"- {ep['text']}" for ep in memory.get("episodes", []))
 
         # 2. Build system prompt with memory context
         system = "You are a helpful assistant with access to user memory.\n"
         if facts_context:
             system += f"\nKnown facts about this user:\n{facts_context}"
-        if insights_context:
-            system += f"\nBehavioral insights:\n{insights_context}"
+        if episodes_context:
+            system += f"\nMemory episodes:\n{episodes_context}"
 
         # 3. Get response
         conversation_history.append({"role": "user", "content": user_input})

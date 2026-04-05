@@ -34,7 +34,7 @@ async def main():
 
         await asyncio.sleep(6)  # wait for async extraction
 
-        # L2: full story — facts + insights + source sentences + session context
+        # L2: full story — facts + episodes + source sentences + session context
         results = await v.search(
             query="What are the payment details for this user?",
             user_id="user-123",
@@ -46,9 +46,9 @@ async def main():
         for f in results.get("facts", []):
             print(f"  [{f.get('score', 0):.3f}] {f['text']}")
 
-        print("\nInsights:")
-        for i in results.get("insights", []):
-            print(f"  {i['text']}")
+        print("\nEpisodes:")
+        for ep in results.get("episodes", []):
+            print(f"  {ep['text']}")
 
         print("\nSource sentences:")
         for s in results.get("sentences", []):

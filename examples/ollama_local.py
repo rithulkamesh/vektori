@@ -34,7 +34,7 @@ async def main():
         depth="l1",
     )
     print("Facts:", [f["text"] for f in results.get("facts", [])])
-    print("Insights:", [i["text"] for i in results.get("insights", [])])
+    print("Episodes:", [ep["text"] for ep in results.get("episodes", [])])
     await v.close()
 
 

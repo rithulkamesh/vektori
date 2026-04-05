@@ -34,7 +34,7 @@ async def main():
 
     await asyncio.sleep(5)  # wait for async fact extraction
 
-    print("\nSearching (L1 — facts + insights)...")
+    print("\nSearching (L1 — facts + episodes)...")
     results = await v.search(
         query="How does this user prefer to communicate?",
         user_id="user-123",
@@ -45,9 +45,9 @@ async def main():
     for fact in results.get("facts", []):
         print(f"  [{fact.get('score', 0):.3f}] {fact['text']}")
 
-    print("\nInsights:")
-    for insight in results.get("insights", []):
-        print(f"  {insight['text']}")
+    print("\nEpisodes:")
+    for episode in results.get("episodes", []):
+        print(f"  {episode['text']}")
 
     await v.close()
 

@@ -20,7 +20,7 @@ DEFAULT_MODEL = "gpt-4o-mini"
 
 class LiteLLMProvider(LLMProvider):
     """
-    LiteLLM-backed LLM provider for fact + insight extraction.
+    LiteLLM-backed LLM provider for fact + episode extraction.
 
     Supports any model string that LiteLLM understands:
       - "gpt-4o-mini"

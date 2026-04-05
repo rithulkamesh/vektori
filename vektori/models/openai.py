@@ -54,7 +54,7 @@ class OpenAIEmbedder(EmbeddingProvider):
 
 
 class OpenAILLM(LLMProvider):
-    """OpenAI chat completion for fact + insight extraction."""
+    """OpenAI chat completion for fact + episode extraction."""
 
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         self.model = model or DEFAULT_LLM_MODEL

@@ -16,7 +16,7 @@ def _mock_vektori() -> Vektori:
     v.embedder.embed = AsyncMock(return_value=[0.1] * 1536)
     v.embedder.embed_batch = AsyncMock(side_effect=lambda texts: [[0.1] * 1536] * len(texts))
     v.llm = MagicMock()
-    v.llm.generate = AsyncMock(return_value='{"facts": [], "insights": []}')
+    v.llm.generate = AsyncMock(return_value='{"facts": [], "episodes": []}')
     v.db = MemoryBackend()
     v._extractor = FactExtractor(db=v.db, embedder=v.embedder, llm=v.llm)
     v._search = SearchPipeline(db=v.db, embedder=v.embedder)

@@ -47,11 +47,11 @@ test: add conflict resolution integration tests
 
 ## Architecture
 
-The three-layer graph (Facts → Insights → Sentences) is the core invariant.
+The three-layer graph (Facts → Episodes → Sentences) is the core invariant.
 See `VEKTORI_TECHNICAL_SPEC.md` for full architecture docs.
 
 - **L0 Facts**: Primary search surface, vector search lands here.
-- **L1 Insights**: Discovered via `insight_facts` graph traversal, not vector search.
+- **L1 Episodes**: Discovered via `episode_facts` graph traversal, not vector search.
 - **L2 Sentences**: Raw conversation, sequential `NEXT` edges within sessions.
 
 Do not break this layering without discussion.

@@ -79,8 +79,8 @@ async def main():
 
     for fact in results["facts"]:
         print(f"[{fact['score']:.2f}] {fact['text']}")
-    for insight in results["insights"]:
-        print(f"episode: {insight['text']}")
+    for episode in results["episodes"]:
+        print(f"episode: {episode['text']}")
 
     await v.close()
 
@@ -147,7 +147,7 @@ async def chat(user_id: str):
         # 1. Pull relevant memory
         mem = await v.search(query=user_input, user_id=user_id, depth="l1")
         facts = "\n".join(f"- {f['text']}" for f in mem.get("facts", []))
-        episodes = "\n".join(f"- {i['text']}" for i in mem.get("insights", []))
+        episodes = "\n".join(f"- {ep['text']}" for ep in mem.get("episodes", []))
 
         # 2. Inject into system prompt
         system = "You are a helpful assistant with memory.\n"

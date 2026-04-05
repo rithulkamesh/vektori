@@ -17,7 +17,7 @@ class StorageBackend(ABC):
     The interface maps directly to the two-layer graph schema:
       - Facts (L0): LLM-extracted statements, primary vector search surface
       - Sentences (L2): raw conversation nodes + NEXT edges (context expansion)
-      - Join tables: fact_sources (L0↔L2)
+      - Join tables: fact_sources (L0↔L2), episode_facts (L1↔L0)
 
     Layer numbering matches SearchPipeline depth parameter:
       L0 — vector search over facts only
@@ -58,7 +58,7 @@ class StorageBackend(ABC):
         session_id: str,
         threshold: float = 0.75,
     ) -> list[str]:
-        """Find sentence IDs semantically similar to given quotes. Used to link facts/insights to source sentences."""
+        """Find sentence IDs semantically similar to given quotes. Used to link facts/episodes to source sentences."""
         ...
 
     async def search_sentences_in_session(
@@ -196,10 +196,10 @@ class StorageBackend(ABC):
         for fact_id, sentence_id in pairs:
             await self.insert_fact_source(fact_id, sentence_id)
 
-    # ── Insights ──
+    # ── Episodes ──
 
     @abstractmethod
-    async def insert_insight(
+    async def insert_episode(
         self,
         text: str,
         embedding: list[float],
@@ -207,40 +207,40 @@ class StorageBackend(ABC):
         agent_id: str | None = None,
         session_id: str | None = None,
     ) -> str:
-        """Insert an insight and return its UUID.
+        """Insert an episode and return its UUID.
 
         Uses a deterministic ID (uuid5 of user_id+text) so inserting the same
-        insight twice is idempotent — ON CONFLICT DO NOTHING.
-        embedding: pre-computed vector of the insight text for direct vector search.
+        episode twice is idempotent — ON CONFLICT DO NOTHING.
+        embedding: pre-computed vector of the episode text for direct vector search.
         """
         ...
 
     @abstractmethod
-    async def insert_insight_fact(self, insight_id: str, fact_id: str) -> None:
-        """Link an insight to a fact it was derived from. ON CONFLICT DO NOTHING."""
+    async def insert_episode_fact(self, episode_id: str, fact_id: str) -> None:
+        """Link an episode to a fact it was derived from. ON CONFLICT DO NOTHING."""
         ...
 
     @abstractmethod
-    async def get_insights_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
-        """Return insights linked to any of the given facts via insight_facts.
+    async def get_episodes_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
+        """Return episodes linked to any of the given facts via episode_facts.
 
         Used at retrieval time to surface L1 patterns after L0 vector search.
-        Returns insight dicts with at minimum {id, text}.
+        Returns episode dicts with at minimum {id, text}.
         """
         ...
 
     @abstractmethod
-    async def search_insights(
+    async def search_episodes(
         self,
         embedding: list[float],
         user_id: str,
         agent_id: str | None = None,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        """Vector search over insights for a user.
+        """Vector search over episodes for a user.
 
-        Complements graph traversal: surfaces insights from sessions whose facts
-        didn't land in the top-k but whose insight text is semantically close to
+        Complements graph traversal: surfaces episodes from sessions whose facts
+        didn't land in the top-k but whose episode text is semantically close to
         the query.
         """
         ...

@@ -29,7 +29,7 @@ class EmbeddingProvider(ABC):
 
 
 class LLMProvider(ABC):
-    """Abstract LLM provider for fact and insight extraction."""
+    """Abstract LLM provider for fact and episode extraction."""
 
     @abstractmethod
     async def generate(self, prompt: str, max_tokens: int | None = None) -> str:

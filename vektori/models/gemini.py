@@ -1,5 +1,5 @@
 """
-Google Gemini API provider for fact and insight extraction.
+Google Gemini API provider for fact and episode extraction.
 
 Direct integration with google-generativeai library.
 Supports: gemini-2-flash, gemini-2.5-flash, gemini-3-pro, etc.
@@ -39,7 +39,7 @@ DEFAULT_BACKOFF_MULTIPLIER = 2.0
 
 class GeminiLLM(LLMProvider):
     """
-    Google Gemini API provider for fact + insight extraction.
+    Google Gemini API provider for fact + episode extraction.
 
     Direct google-generativeai integration (not via LiteLLM).
     Supports all Gemini models: gemini-2-flash, gemini-2.5-flash, gemini-3-pro, etc.

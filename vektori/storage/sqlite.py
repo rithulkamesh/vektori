@@ -122,7 +122,7 @@ class SQLiteBackend(StorageBackend):
 
             CREATE INDEX IF NOT EXISTS idx_sentences_user ON sentences (user_id);
             CREATE INDEX IF NOT EXISTS idx_sentences_session ON sentences (session_id);
-            CREATE TABLE IF NOT EXISTS insights (
+            CREATE TABLE IF NOT EXISTS episodes (
                 id TEXT PRIMARY KEY,
                 text TEXT NOT NULL,
                 embedding TEXT,            -- JSON array of floats
@@ -134,16 +134,16 @@ class SQLiteBackend(StorageBackend):
                 UNIQUE (user_id, text)
             );
 
-            CREATE TABLE IF NOT EXISTS insight_facts (
-                insight_id TEXT NOT NULL REFERENCES insights(id) ON DELETE CASCADE,
+            CREATE TABLE IF NOT EXISTS episode_facts (
+                episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
                 fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
-                PRIMARY KEY (insight_id, fact_id)
+                PRIMARY KEY (episode_id, fact_id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_facts_user ON facts (user_id);
             CREATE INDEX IF NOT EXISTS idx_facts_active ON facts (user_id, is_active);
             CREATE INDEX IF NOT EXISTS idx_fact_sources_fact ON fact_sources (fact_id);
-            CREATE INDEX IF NOT EXISTS idx_insight_facts_fact ON insight_facts (fact_id);
+            CREATE INDEX IF NOT EXISTS idx_episode_facts_fact ON episode_facts (fact_id);
         """)
 
     async def _migrate(self) -> None:
@@ -467,9 +467,9 @@ class SQLiteBackend(StorageBackend):
             rows = await cursor.fetchall()
         return [row[0] for row in rows]
 
-    # ── Insights ──
+    # ── Episodes ──
 
-    async def insert_insight(
+    async def insert_episode(
         self,
         text: str,
         embedding: list[float],
@@ -477,44 +477,44 @@ class SQLiteBackend(StorageBackend):
         agent_id: str | None = None,
         session_id: str | None = None,
     ) -> str:
-        insight_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}::{text}"))
+        episode_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}::{text}"))
         await self._conn.execute(
-            """INSERT OR IGNORE INTO insights (id, text, embedding, user_id, agent_id, session_id)
+            """INSERT OR IGNORE INTO episodes (id, text, embedding, user_id, agent_id, session_id)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (insight_id, text, json.dumps(embedding), user_id, agent_id, session_id),
+            (episode_id, text, json.dumps(embedding), user_id, agent_id, session_id),
         )
         await self._conn.commit()
-        return insight_id
+        return episode_id
 
-    async def insert_insight_fact(self, insight_id: str, fact_id: str) -> None:
+    async def insert_episode_fact(self, episode_id: str, fact_id: str) -> None:
         await self._conn.execute(
-            "INSERT OR IGNORE INTO insight_facts (insight_id, fact_id) VALUES (?, ?)",
-            (insight_id, fact_id),
+            "INSERT OR IGNORE INTO episode_facts (episode_id, fact_id) VALUES (?, ?)",
+            (episode_id, fact_id),
         )
         await self._conn.commit()
 
-    async def get_insights_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
+    async def get_episodes_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
         if not fact_ids:
             return []
         placeholders = ",".join("?" * len(fact_ids))
         async with self._conn.execute(
-            f"""SELECT DISTINCT i.id, i.text, i.session_id, i.created_at
-                FROM insights i
-                JOIN insight_facts if2 ON i.id = if2.insight_id
-                WHERE if2.fact_id IN ({placeholders}) AND i.is_active = 1""",
+            f"""SELECT DISTINCT e.id, e.text, e.session_id, e.created_at
+                FROM episodes e
+                JOIN episode_facts ef2 ON e.id = ef2.episode_id
+                WHERE ef2.fact_id IN ({placeholders}) AND e.is_active = 1""",
             fact_ids,
         ) as cursor:
             rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
-    async def search_insights(
+    async def search_episodes(
         self,
         embedding: list[float],
         user_id: str,
         agent_id: str | None = None,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        query = "SELECT id, text, session_id, embedding, created_at FROM insights WHERE user_id = ? AND is_active = 1"
+        query = "SELECT id, text, session_id, embedding, created_at FROM episodes WHERE user_id = ? AND is_active = 1"
         params: list[Any] = [user_id]
         if agent_id:
             query += " AND agent_id = ?"
@@ -606,7 +606,7 @@ class SQLiteBackend(StorageBackend):
 
     async def delete_user(self, user_id: str) -> int:
         count = 0
-        for table in ["sentences", "facts", "insights", "sessions"]:
+        for table in ["sentences", "facts", "episodes", "sessions"]:
             async with self._conn.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE user_id = ?", (user_id,)
             ) as cursor:

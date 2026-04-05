@@ -297,7 +297,7 @@ class LongMemEvalBenchmark:
                 f"{msg['role'].upper()}: {msg['content']}" for msg in session
             )
             try:
-                await extractor._extract_insights(
+                await extractor._extract_episodes(
                     inserted_facts=inserted_facts,
                     conversation=conversation,
                     session_id=haystack_sid,
@@ -402,7 +402,7 @@ class LongMemEvalBenchmark:
                     date_prefix = f"[{str(ts)[:10]}] "
                 lines.append(f"{i}. {date_prefix}{fact.get('text', str(fact))}")
 
-        episodes = search_results.get("insights") or []
+        episodes = search_results.get("episodes") or []
         if episodes:
             lines.append("\n## Episodes")
             for i, ep in enumerate(episodes, 1):
