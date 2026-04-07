@@ -196,7 +196,7 @@ def init(
 @app.command()
 def add(
     text: str = typer.Argument(..., help="Text to store as a memory."),
-    user_id: str = typer.Option(..., "--user-id", "-u", help="User ID."),
+    user_id: str = typer.Option(..., "--user-id", "-u", envvar="VEKTORI_USER_ID", help="User ID."),
     session_id: str | None = typer.Option(
         None, "--session-id", "-s", help="Session ID (auto-generated if omitted)."
     ),
@@ -252,7 +252,7 @@ def add(
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Search query."),
-    user_id: str = typer.Option(..., "--user-id", "-u", help="User ID."),
+    user_id: str = typer.Option(..., "--user-id", "-u", envvar="VEKTORI_USER_ID", help="User ID."),
     top_k: int = typer.Option(10, "--top-k", "-k", help="Max results to return."),
     depth: str = typer.Option("l1", "--depth", "-d", help="Search depth: l0, l1, or l2."),
     extraction_model: str | None = typer.Option(
@@ -316,7 +316,7 @@ def search(
 
 @app.command(name="list")
 def list_memories(
-    user_id: str = typer.Option(..., "--user-id", "-u", help="User ID."),
+    user_id: str = typer.Option(..., "--user-id", "-u", envvar="VEKTORI_USER_ID", help="User ID."),
     embedding_model: str | None = typer.Option(
         None, "--embedding-model", "-e", envvar="VEKTORI_EMBEDDING_MODEL", help=_EMBEDDING_HELP
     ),
@@ -354,7 +354,7 @@ def list_memories(
 
 @app.command()
 def delete(
-    user_id: str = typer.Option(..., "--user-id", "-u", help="User ID."),
+    user_id: str = typer.Option(..., "--user-id", "-u", envvar="VEKTORI_USER_ID", help="User ID."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
     as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
@@ -375,6 +375,171 @@ def delete(
         _out({"deleted": n, "user_id": user_id}, True)
     else:
         typer.echo(f"Deleted {n} record(s) for user '{user_id}'.")
+
+
+# ---------------------------------------------------------------------------
+# remember (alias for add)
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def remember(
+    text: str = typer.Argument(..., help="Text to store as a memory."),
+    user_id: str = typer.Option(..., "--user-id", "-u", envvar="VEKTORI_USER_ID", help="User ID."),
+    session_id: str | None = typer.Option(
+        None, "--session-id", "-s", help="Session ID (auto-generated if omitted)."
+    ),
+    extraction_model: str | None = typer.Option(
+        None, "--extraction-model", "-m", envvar="VEKTORI_EXTRACTION_MODEL", help=_EXTRACTION_HELP
+    ),
+    embedding_model: str | None = typer.Option(
+        None, "--embedding-model", "-e", envvar="VEKTORI_EMBEDDING_MODEL", help=_EMBEDDING_HELP
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Remember something. Alias for `add` — reads naturally in agent prompts."""
+    em = extraction_model or _default_extraction()
+    eb = embedding_model or _default_embedding()
+    _warn_openai(em, "--extraction-model")
+    sid = session_id or str(uuid.uuid4())
+    messages = [{"role": "user", "content": text}]
+
+    async def _run() -> dict:
+        v = _client(em, eb)
+        try:
+            result = await v.add(messages, session_id=sid, user_id=user_id)
+        finally:
+            await v.close()
+        return result
+
+    try:
+        result = asyncio.run(_run())
+    except Exception as e:
+        typer.echo(f"[error] {e}", err=True)
+        raise typer.Exit(1)
+
+    if as_json:
+        _out(result, True)
+    else:
+        typer.echo(
+            f"Stored — {result['sentences_stored']} sentence(s), extraction: {result['extraction']}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# recall (alias for search)
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def recall(
+    query: str = typer.Argument(..., help="What to recall."),
+    user_id: str = typer.Option(..., "--user-id", "-u", envvar="VEKTORI_USER_ID", help="User ID."),
+    top_k: int = typer.Option(10, "--top-k", "-k", help="Max results to return."),
+    extraction_model: str | None = typer.Option(
+        None, "--extraction-model", "-m", envvar="VEKTORI_EXTRACTION_MODEL", help=_EXTRACTION_HELP
+    ),
+    embedding_model: str | None = typer.Option(
+        None, "--embedding-model", "-e", envvar="VEKTORI_EMBEDDING_MODEL", help=_EMBEDDING_HELP
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Recall memories. Alias for `search` — reads naturally in agent prompts."""
+    em = extraction_model or _default_extraction()
+    eb = embedding_model or _default_embedding()
+
+    async def _run() -> dict:
+        v = _client(em, eb)
+        try:
+            result = await v.search(query, user_id=user_id, top_k=top_k, depth="l1")
+        finally:
+            await v.close()
+        return result
+
+    try:
+        result = asyncio.run(_run())
+    except Exception as e:
+        typer.echo(f"[error] {e}", err=True)
+        raise typer.Exit(1)
+
+    facts = result.get("facts", [])
+    sentences = result.get("sentences", [])
+
+    if as_json:
+        # Richer output for agents — include session_id, created_at, source
+        agent_facts = [
+            {
+                "text": f["text"],
+                "score": f.get("score"),
+                "session_id": f.get("session_id"),
+                "created_at": f.get("created_at"),
+                "source": f.get("source"),
+            }
+            for f in facts
+        ]
+        _out({"facts": agent_facts, "memory_found": len(agent_facts) > 0}, True)
+        return
+
+    if facts:
+        for i, fact in enumerate(facts, 1):
+            score = fact.get("score")
+            score_str = f"  [{score:.3f}]" if score is not None else ""
+            typer.echo(f"{i}.{score_str} {fact['text']}")
+    elif sentences:
+        for i, sent in enumerate(sentences, 1):
+            dist = sent.get("distance")
+            score_str = f"  [{1 - dist:.3f}]" if dist is not None else ""
+            typer.echo(f"{i}.{score_str} {sent['text']}")
+    else:
+        typer.echo("No memories found.")
+
+
+# ---------------------------------------------------------------------------
+# stats
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def stats(
+    user_id: str = typer.Option(..., "--user-id", "-u", envvar="VEKTORI_USER_ID", help="User ID."),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
+) -> None:
+    """Show memory stats for a user."""
+
+    async def _run() -> dict:
+        v = _client(_default_extraction(), _default_embedding())
+        await v._ensure_initialized()
+        try:
+            facts = await v.get_facts(user_id=user_id)
+            session_count = await v.db.count_sessions(user_id=user_id)
+        finally:
+            await v.close()
+
+        dates = [f.get("created_at", "") for f in facts if f.get("created_at")]
+        oldest = min(dates)[:10] if dates else "—"
+        newest = max(dates)[:10] if dates else "—"
+
+        return {
+            "user_id": user_id,
+            "facts": len(facts),
+            "sessions": session_count,
+            "oldest": oldest,
+            "newest": newest,
+        }
+
+    try:
+        data = asyncio.run(_run())
+    except Exception as e:
+        typer.echo(f"[error] {e}", err=True)
+        raise typer.Exit(1)
+
+    if as_json:
+        _out(data, True)
+    else:
+        typer.echo(
+            f"facts: {data['facts']}  sessions: {data['sessions']}  "
+            f"oldest: {data['oldest']}  newest: {data['newest']}"
+        )
 
 
 def main() -> None:
