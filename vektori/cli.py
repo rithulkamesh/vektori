@@ -7,7 +7,6 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -116,10 +115,10 @@ def _out(data: object, as_json: bool) -> None:
 
 @app.command()
 def config(
-    extraction_model: Optional[str] = typer.Option(
+    extraction_model: str | None = typer.Option(
         None, "--extraction-model", "-m", help=_EXTRACTION_HELP
     ),
-    embedding_model: Optional[str] = typer.Option(
+    embedding_model: str | None = typer.Option(
         None, "--embedding-model", "-e", help=_EMBEDDING_HELP
     ),
     show: bool = typer.Option(False, "--show", help="Print current config."),
@@ -162,10 +161,10 @@ def config(
 
 @app.command()
 def init(
-    extraction_model: Optional[str] = typer.Option(
+    extraction_model: str | None = typer.Option(
         None, "--extraction-model", "-m", envvar="VEKTORI_EXTRACTION_MODEL", help=_EXTRACTION_HELP
     ),
-    embedding_model: Optional[str] = typer.Option(
+    embedding_model: str | None = typer.Option(
         None, "--embedding-model", "-e", envvar="VEKTORI_EMBEDDING_MODEL", help=_EMBEDDING_HELP
     ),
 ) -> None:
@@ -192,13 +191,13 @@ def init(
 def add(
     text: str = typer.Argument(..., help="Text to store as a memory."),
     user_id: str = typer.Option(..., "--user-id", "-u", help="User ID."),
-    session_id: Optional[str] = typer.Option(
+    session_id: str | None = typer.Option(
         None, "--session-id", "-s", help="Session ID (auto-generated if omitted)."
     ),
-    extraction_model: Optional[str] = typer.Option(
+    extraction_model: str | None = typer.Option(
         None, "--extraction-model", "-m", envvar="VEKTORI_EXTRACTION_MODEL", help=_EXTRACTION_HELP
     ),
-    embedding_model: Optional[str] = typer.Option(
+    embedding_model: str | None = typer.Option(
         None, "--embedding-model", "-e", envvar="VEKTORI_EMBEDDING_MODEL", help=_EMBEDDING_HELP
     ),
     no_extraction: bool = typer.Option(
@@ -248,10 +247,10 @@ def search(
     user_id: str = typer.Option(..., "--user-id", "-u", help="User ID."),
     top_k: int = typer.Option(10, "--top-k", "-k", help="Max results to return."),
     depth: str = typer.Option("l1", "--depth", "-d", help="Search depth: l0, l1, or l2."),
-    extraction_model: Optional[str] = typer.Option(
+    extraction_model: str | None = typer.Option(
         None, "--extraction-model", "-m", envvar="VEKTORI_EXTRACTION_MODEL", help=_EXTRACTION_HELP
     ),
-    embedding_model: Optional[str] = typer.Option(
+    embedding_model: str | None = typer.Option(
         None, "--embedding-model", "-e", envvar="VEKTORI_EMBEDDING_MODEL", help=_EMBEDDING_HELP
     ),
     expand: bool = typer.Option(
@@ -307,7 +306,7 @@ def search(
 @app.command(name="list")
 def list_memories(
     user_id: str = typer.Option(..., "--user-id", "-u", help="User ID."),
-    embedding_model: Optional[str] = typer.Option(
+    embedding_model: str | None = typer.Option(
         None, "--embedding-model", "-e", envvar="VEKTORI_EMBEDDING_MODEL", help=_EMBEDDING_HELP
     ),
     as_json: bool = typer.Option(False, "--json", help="Output as JSON."),
