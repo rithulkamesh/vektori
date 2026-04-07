@@ -61,7 +61,7 @@ class VektoriConfig:
     min_retrieval_score: float = 0.3
 
     # Episode generation
-    max_episodes: int = 3          # max episodic narratives generated per session
+    max_episodes: int = 3  # max episodic narratives generated per session
     max_episode_input_tokens: int = 1500
     max_episode_output_tokens: int = 1024
 
