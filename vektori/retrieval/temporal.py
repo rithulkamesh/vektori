@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 @dataclass
@@ -121,7 +121,7 @@ class TemporalQueryParser:
         reference_date: datetime | None = None,
     ) -> TemporalWindow | None:
         """Return a TemporalWindow if the query contains temporal language, else None."""
-        ref = reference_date or datetime.utcnow()
+        ref = reference_date or datetime.now(timezone.utc).replace(tzinfo=None)
 
         # "last N units"
         m = _LAST_N_UNIT.search(query)
