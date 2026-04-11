@@ -301,9 +301,7 @@ async def test_count_sessions(lancedb_backend):
 async def test_delete_user(lancedb_backend):
     emb = [0.1, 0.2, 0.3, 0.4]
     await lancedb_backend.upsert_session("lsess-del", "delete-test-user")
-    await lancedb_backend.insert_fact(
-        text="Delete me.", embedding=emb, user_id="delete-test-user"
-    )
+    await lancedb_backend.insert_fact(text="Delete me.", embedding=emb, user_id="delete-test-user")
     deleted = await lancedb_backend.delete_user("delete-test-user")
     assert deleted >= 2
 

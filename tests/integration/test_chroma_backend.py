@@ -154,9 +154,7 @@ async def test_increment_fact_mentions(chroma_backend):
 
 async def test_find_fact_by_text(chroma_backend):
     emb = [0.4, 0.5, 0.6, 0.7]
-    await chroma_backend.insert_fact(
-        text="User is vegetarian.", embedding=emb, user_id="test-user"
-    )
+    await chroma_backend.insert_fact(text="User is vegetarian.", embedding=emb, user_id="test-user")
     found = await chroma_backend.find_fact_by_text("test-user", "vegetarian")
     assert found is not None
     assert "vegetarian" in found["text"]
@@ -261,9 +259,7 @@ async def test_count_sessions(chroma_backend):
 async def test_delete_user(chroma_backend):
     emb = [0.1, 0.2, 0.3, 0.4]
     await chroma_backend.upsert_session("csess-del", "delete-test-user")
-    await chroma_backend.insert_fact(
-        text="Delete me.", embedding=emb, user_id="delete-test-user"
-    )
+    await chroma_backend.insert_fact(text="Delete me.", embedding=emb, user_id="delete-test-user")
     deleted = await chroma_backend.delete_user("delete-test-user")
     assert deleted >= 2
 
