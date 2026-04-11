@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from vektori.config import VektoriConfig
 from vektori.storage.chroma_backend import ChromaBackend
 from vektori.storage.factory import create_storage
 from vektori.storage.lancedb_backend import LanceDBBackend
-
 
 # ── ChromaBackend constructor ──────────────────────────────────────────────────
 
