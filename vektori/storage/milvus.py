@@ -36,7 +36,7 @@ def _escape(value: str) -> str:
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _csv_to_ids(value: Any) -> list[str]:
@@ -248,12 +248,9 @@ class MilvusBackend(StorageBackend):
         if inspect.iscoroutinefunction(fn):
             try:
                 return await fn(**kwargs)
-            except Exception as e:
+            except RuntimeError:
                 # pytest-asyncio (or other multi-loop runtimes) may reuse a backend
                 # instance across event loops, which breaks grpc.aio internals.
-                if "attached to a different loop" not in str(e):
-                    raise
-
                 logger.warning(
                     "AsyncMilvusClient loop mismatch detected; falling back to sync client"
                 )
@@ -477,8 +474,24 @@ class MilvusBackend(StorageBackend):
                 ors = " or ".join([f'id == "{_escape(i)}"' for i in ids])
                 try:
                     await self._delete(collection_name, ors)
-                except Exception:
-                    pass
+                except RuntimeError as e:
+                    logger.warning(
+                        "Milvus delete fallback unsupported before insert; continuing "
+                        "with insert (collection=%s, filter=%s): %s",
+                        collection_name,
+                        ors,
+                        e,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Milvus delete fallback failed; aborting insert to avoid "
+                        "duplicate records (collection=%s, filter=%s, ids=%s): %s",
+                        collection_name,
+                        ors,
+                        ids,
+                        e,
+                    )
+                    raise
             await self._call("insert", collection_name=collection_name, data=rows)
             await self._flush_collection(collection_name)
 
@@ -1358,7 +1371,7 @@ class MilvusBackend(StorageBackend):
         fact_set = set(fact_ids)
         rows = await self._query_all(
             collection_name=self._episodes_col,
-            filter_expr='record_type == "episode" and is_active == true',
+            filter_expr=f'record_type == "{_EPISODE_RECORD}" and is_active == true',
             output_fields=self._episode_output_fields(),
             batch_size=200,
         )
