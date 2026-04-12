@@ -4565,12 +4565,12 @@ wheels = [
 
 [[package]]
 name = "veclite-db"
-version = "1.0.9"
+version = "1.1.1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/6a/7db34b784c25280c2ad52236e6e3f9c3e4939ffc985f6eab0d458232eed0/veclite_db-1.0.9-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:310f8131e69ef51fc23db2ad8985c2faef30867cd00c8941d7b1b2a94ea02c99", size = 406275, upload-time = "2026-04-11T22:16:51.779Z" },
-    { url = "https://files.pythonhosted.org/packages/e1/b1/0c88e85d2d1bbfb30923c9ab0c9b69147915e058eab07090ccc3cd8d7ae9/veclite_db-1.0.9-cp38-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:2662cd390502f8de0bd463af618d6073e1baa02088c79f530c39d209190c1f46", size = 526993, upload-time = "2026-04-11T22:16:53.108Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/ae/0214e4046885afad7ade84921c2051139c3ff6b56cc740a3e73cf9e0d4e0/veclite_db-1.0.9-cp38-abi3-win_amd64.whl", hash = "sha256:4ba7242cbd9f598e2846ab0929c20f49010883776c5c38841d5c130fed073129", size = 290045, upload-time = "2026-04-11T22:16:54.37Z" },
+    { url = "https://files.pythonhosted.org/packages/52/ec/34f15c1da4611cbc937a9eba45b0fa1295a8c74b407d1cd294090f370457/veclite_db-1.1.1-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:e21b8d9b26fe158e03982872470cc703c12fe769c35b190d58690ae7abd00298", size = 729134, upload-time = "2026-04-12T06:32:43.857Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/9e/276d5b02b95e7caa6d96245a22b320cd7a09ce170503155a8a5d181347b1/veclite_db-1.1.1-cp38-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:5f3671d1a21c3eeb82d7294805a002aebac5033d33fb5326f1d1e0965a6af5bc", size = 891726, upload-time = "2026-04-12T06:32:45.712Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/80/c881e46ea5cb52d4926a1ecdb7ad4d10460e2b8a85ab2362883a6939d9d0/veclite_db-1.1.1-cp38-abi3-win_amd64.whl", hash = "sha256:8d572d378a076e29b6865469521c4b628555b10d4b24569ffd0768f0d83164c3", size = 612851, upload-time = "2026-04-12T06:32:47.449Z" },
 ]
 
 [[package]]
@@ -4664,8 +4664,8 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'all'", specifier = ">=2.6" },
     { name = "sentence-transformers", marker = "extra == 'sentence-transformers'", specifier = ">=2.6" },
     { name = "typer", specifier = ">=0.9" },
-    { name = "veclite-db", marker = "extra == 'all'", specifier = ">=1.0.9" },
-    { name = "veclite-db", marker = "extra == 'veclite'", specifier = ">=1.0.9" },
+    { name = "veclite-db", marker = "extra == 'all'", specifier = ">=1.1.1" },
+    { name = "veclite-db", marker = "extra == 'veclite'", specifier = ">=1.1.1" },
     { name = "voyageai", marker = "extra == 'all'", specifier = ">=0.2" },
     { name = "voyageai", marker = "extra == 'anthropic'", specifier = ">=0.2" },
 ]
