@@ -34,6 +34,8 @@ dependencies = [
 postgres = ["asyncpg>=0.29", "pgvector>=0.2"]
 neo4j = ["neo4j>=5.14"]
 qdrant = ["qdrant-client>=1.7"]
+chroma = ["chromadb>=0.4"]
+lancedb = ["lancedb>=0.5", "pyarrow>=14"]
 milvus = ["pymilvus>=2.5.3"]
 anthropic = ["anthropic>=0.20", "voyageai>=0.2"]
 sentence-transformers = ["sentence-transformers>=2.6"]

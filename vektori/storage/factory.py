@@ -75,6 +75,36 @@ async def create_storage(config: VektoriConfig) -> StorageBackend:
             embedding_dim=config.embedding_dimension,
         )
 
+    elif backend_key == "chroma":
+        from vektori.storage.chroma_backend import ChromaBackend
+
+        # database_url is treated as the persist path for embedded mode,
+        # or "http://host:port" for HTTP server mode.
+        host: str | None = None
+        port = 8000
+        path: str | None = database_url
+        if database_url and database_url.startswith("http"):
+            from urllib.parse import urlparse
+
+            parsed = urlparse(database_url)
+            host = parsed.hostname or "localhost"
+            port = parsed.port or 8000
+            path = None
+        backend = ChromaBackend(
+            path=path,
+            host=host,
+            port=port,
+            embedding_dim=config.embedding_dimension,
+        )
+
+    elif backend_key == "lancedb":
+        from vektori.storage.lancedb_backend import LanceDBBackend
+
+        backend = LanceDBBackend(
+            uri=database_url or ".lancedb",
+            embedding_dim=config.embedding_dimension,
+        )
+
     elif backend_key == "milvus" or (
         database_url
         and (
