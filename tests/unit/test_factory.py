@@ -65,3 +65,10 @@ def test_create_anthropic_llm():
 def test_unknown_llm_provider_raises():
     with pytest.raises(ValueError, match="Unknown LLM provider"):
         create_llm("nonexistent:model")
+
+def test_create_nvidia_embedder_default_model():
+    from vektori.models.nvidia import NvidiaEmbedder, DEFAULT_EMBEDDING_MODEL
+
+    embedder = create_embedder("nvidia")
+    assert isinstance(embedder, NvidiaEmbedder)
+    assert embedder.model == DEFAULT_EMBEDDING_MODEL  # "nvidia/llama-nemotron-embed-1b-v2"
