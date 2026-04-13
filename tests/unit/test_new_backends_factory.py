@@ -88,6 +88,18 @@ async def test_factory_milvus_by_url(url):
     assert backend.url == url
 
 
+async def test_factory_milvus_token_passed():
+    cfg = VektoriConfig(
+        storage_backend="milvus",
+        database_url="https://milvus.example.com",
+        milvus_token="token-123",
+    )
+    with patch.object(MilvusBackend, "initialize", new_callable=AsyncMock):
+        backend = await create_storage(cfg)
+    assert isinstance(backend, MilvusBackend)
+    assert backend.token == "token-123"
+
+
 # ── Neo4j auth parsing in factory ─────────────────────────────────────────────
 
 

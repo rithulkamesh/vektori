@@ -108,10 +108,12 @@ class MilvusBackend(StorageBackend):
     def __init__(
         self,
         url: str = "http://localhost:19530",
+        token: str | None = None,
         prefix: str = "vektori",
         embedding_dim: int = 1024,
     ) -> None:
         self.url = url
+        self.token = token
         self.prefix = prefix
         self.embedding_dim = embedding_dim
 
@@ -144,12 +146,15 @@ class MilvusBackend(StorageBackend):
 
         self._datatype = DataType
         self._json_is_native = hasattr(DataType, "JSON")
+        client_kwargs: dict[str, Any] = {"uri": self.url}
+        if self.token:
+            client_kwargs["token"] = self.token
 
         # Prefer asyncio-native client; gracefully fallback to sync client.
         try:
-            self._client = AsyncMilvusClient(uri=self.url)
+            self._client = AsyncMilvusClient(**client_kwargs)
         except Exception:
-            self._client = MilvusClient(uri=self.url)
+            self._client = MilvusClient(**client_kwargs)
 
         await self._ensure_collection(self._facts_col, self._fact_schema())
         await self._ensure_collection(self._sentences_col, self._sentence_schema())
@@ -260,7 +265,10 @@ class MilvusBackend(StorageBackend):
             logger.warning("AsyncMilvusClient loop mismatch detected; falling back to sync client")
             from pymilvus import MilvusClient
 
-            self._client = MilvusClient(uri=self.url)
+            fallback_kwargs: dict[str, Any] = {"uri": self.url}
+            if self.token:
+                fallback_kwargs["token"] = self.token
+            self._client = MilvusClient(**fallback_kwargs)
             fn = getattr(self._client, method)
             return await asyncio.to_thread(fn, **kwargs)
         return await asyncio.to_thread(fn, **kwargs)

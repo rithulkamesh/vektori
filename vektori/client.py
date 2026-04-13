@@ -40,6 +40,7 @@ class Vektori:
         temporal_decay_rate: float = 0.001,
         async_extraction: bool = True,
         qdrant_api_key: str | None = None,
+        milvus_token: str | None = None,
         config: VektoriConfig | None = None,
     ) -> None:
         if config is not None:
@@ -58,6 +59,7 @@ class Vektori:
                 temporal_decay_rate=temporal_decay_rate,
                 async_extraction=async_extraction,
                 qdrant_api_key=qdrant_api_key,
+                milvus_token=milvus_token,
             )
 
         self._initialized = False

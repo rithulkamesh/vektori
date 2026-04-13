@@ -34,7 +34,7 @@ _DATABASE_URL_HELP = (
     "Postgres: postgresql://user:pw@host/db  "
     "Neo4j: bolt://host:7687  "
     "Qdrant: http://host:6333  "
-    "Milvus: http://host:19530  "
+    "Milvus: http://host:19530 or https://<cluster-endpoint>  "
     "[env: VEKTORI_DATABASE_URL]"
 )
 _QDRANT_API_KEY_HELP = "Qdrant Cloud API key. [env: QDRANT_API_KEY]"
@@ -136,6 +136,7 @@ def _client(
         storage_backend=storage_backend or _default_storage_backend(),
         database_url=database_url or _default_database_url(),
         qdrant_api_key=qdrant_api_key or os.environ.get("QDRANT_API_KEY"),
+        milvus_token=os.environ.get("MILVUS_TOKEN") or os.environ.get("MILVUS_API_KEY"),
     )
     return Vektori(config=cfg)
 

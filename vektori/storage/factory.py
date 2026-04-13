@@ -87,6 +87,7 @@ async def create_storage(config: VektoriConfig) -> StorageBackend:
         url = database_url or "http://localhost:19530"
         backend = MilvusBackend(
             url=url,
+            token=config.milvus_token,
             embedding_dim=config.embedding_dimension,
         )
 

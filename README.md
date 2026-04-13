@@ -229,6 +229,14 @@ v = Vektori(
     embedding_dimension=1024,
 )
 
+# Milvus / Zilliz Cloud
+v = Vektori(
+    storage_backend="milvus",
+    database_url="https://your-cluster-endpoint",
+    milvus_token="your-api-key-or-token",
+    embedding_dimension=1024,
+)
+
 # In-memory — tests / CI
 v = Vektori(storage_backend="memory")
 ```
@@ -250,6 +258,9 @@ VEKTORI_STORAGE_BACKEND=qdrant VEKTORI_DATABASE_URL=http://localhost:6333 vektor
 
 # Milvus
 VEKTORI_STORAGE_BACKEND=milvus VEKTORI_DATABASE_URL=http://localhost:19530 vektori add "I prefer dark mode" --user-id u1
+
+# Milvus Cloud
+MILVUS_TOKEN=your-api-key VEKTORI_STORAGE_BACKEND=milvus VEKTORI_DATABASE_URL=https://your-cluster-endpoint vektori add "I prefer dark mode" --user-id u1
 ```
 
 **CLI storage flags:**
