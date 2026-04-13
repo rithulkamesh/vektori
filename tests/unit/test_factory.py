@@ -66,9 +66,20 @@ def test_unknown_llm_provider_raises():
     with pytest.raises(ValueError, match="Unknown LLM provider"):
         create_llm("nonexistent:model")
 
+
 def test_create_nvidia_embedder_default_model():
     from vektori.models.nvidia import NvidiaEmbedder, DEFAULT_EMBEDDING_MODEL
 
     embedder = create_embedder("nvidia")
     assert isinstance(embedder, NvidiaEmbedder)
     assert embedder.model == DEFAULT_EMBEDDING_MODEL  # "nvidia/llama-nemotron-embed-1b-v2"
+
+    # Parallel LLM factory assertion: verify nvidia is registered and creates a valid instance
+    from vektori.models.factory import create_llm, LLM_REGISTRY
+
+    assert "nvidia" in LLM_REGISTRY, "nvidia should be registered in LLM_REGISTRY"
+    llm = create_llm("nvidia")
+    assert llm is not None, "create_llm('nvidia') should return a valid instance"
+    assert "Nvidia" in llm.__class__.__name__, (
+        f"LLM class name should include 'Nvidia', got {llm.__class__.__name__}"
+    )
