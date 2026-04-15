@@ -37,6 +37,10 @@ class MemoryBackend(StorageBackend):
         self._edges: list[dict[str, Any]] = []
         self._fact_sources: list[dict[str, str]] = []  # [{fact_id, sentence_id}]
         self._sessions: dict[str, dict[str, Any]] = {}
+        self._syntheses: dict[str, dict[str, Any]] = {}
+        self._synthesis_facts: list[dict[str, str]] = []
+        self._syntheses: dict[str, dict[str, Any]] = {}
+        self._synthesis_facts: list[dict[str, str]] = []
         self._episodes: dict[str, dict[str, Any]] = {}
         self._episode_facts: list[dict[str, str]] = []  # [{episode_id, fact_id}]
 
@@ -287,6 +291,190 @@ class MemoryBackend(StorageBackend):
 
     # ── Join tables ──
 
+    # ── Syntheses ──
+
+    async def insert_synthesis(
+        self,
+        text: str,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> str:
+        synthesis_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}::{text}"))
+        if synthesis_id not in self._syntheses:
+            self._syntheses[synthesis_id] = {
+                "id": synthesis_id,
+                "text": text,
+                "embedding": embedding,
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "is_active": True,
+                "created_at": _utcnow_naive(),
+            }
+        return synthesis_id
+
+    async def insert_synthesis_fact(self, synthesis_id: str, fact_id: str) -> None:
+        # Dedup: don't add the same link twice
+        for link in self._synthesis_facts:
+            if link["synthesis_id"] == synthesis_id and link["fact_id"] == fact_id:
+                return
+        self._synthesis_facts.append({"synthesis_id": synthesis_id, "fact_id": fact_id})
+
+    async def get_syntheses_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
+        if not fact_ids:
+            return []
+        fact_id_set = set(fact_ids)
+        matched_synthesis_ids = {
+            link["synthesis_id"] for link in self._synthesis_facts if link["fact_id"] in fact_id_set
+        }
+        return [
+            {k: v for k, v in self._syntheses[eid].items() if k != "embedding"}
+            for eid in matched_synthesis_ids
+            if eid in self._syntheses and self._syntheses[eid].get("is_active", True)
+        ]
+
+    async def search_syntheses(
+        self,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        results = []
+        for ep in self._syntheses.values():
+            if ep.get("user_id") != user_id:
+                continue
+            if agent_id and ep.get("agent_id") != agent_id:
+                continue
+            if not ep.get("is_active", True):
+                continue
+            emb = ep.get("embedding")
+            if not emb:
+                continue
+            sim = _cosine_similarity(embedding, emb)
+            row = {k: v for k, v in ep.items() if k != "embedding"}
+            results.append({**row, "distance": 1.0 - sim})
+        results.sort(key=lambda x: x["distance"])
+        return results[:limit]
+
+    async def insert_fact_source(self, fact_id: str, sentence_id: str) -> None:
+        self._fact_sources.append({"fact_id": fact_id, "sentence_id": sentence_id})
+
+    async def get_source_sentences(self, fact_ids: list[str]) -> list[str]:
+        fact_id_set = set(fact_ids)
+        return list(
+            {link["sentence_id"] for link in self._fact_sources if link["fact_id"] in fact_id_set}
+        )
+
+    async def get_sentences_by_ids(self, sentence_ids: list[str]) -> list[dict[str, Any]]:
+        id_set = set(sentence_ids)
+        results = [
+            s for s in self._sentences.values() if s["id"] in id_set and s.get("is_active", True)
+        ]
+        return sorted(
+            results,
+            key=lambda x: (
+                x.get("session_id", ""),
+                x.get("turn_number", 0),
+                x.get("sentence_index", 0),
+            ),
+        )
+
+
+    # ── Syntheses ──
+
+    async def insert_synthesis(
+        self,
+        text: str,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> str:
+        synthesis_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}::{text}"))
+        if synthesis_id not in self._syntheses:
+            self._syntheses[synthesis_id] = {
+                "id": synthesis_id,
+                "text": text,
+                "embedding": embedding,
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "is_active": True,
+                "created_at": _utcnow_naive(),
+            }
+        return synthesis_id
+
+    async def insert_synthesis_fact(self, synthesis_id: str, fact_id: str) -> None:
+        # Dedup: don't add the same link twice
+        for link in self._synthesis_facts:
+            if link["synthesis_id"] == synthesis_id and link["fact_id"] == fact_id:
+                return
+        self._synthesis_facts.append({"synthesis_id": synthesis_id, "fact_id": fact_id})
+
+    async def get_syntheses_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
+        if not fact_ids:
+            return []
+        fact_id_set = set(fact_ids)
+        matched_synthesis_ids = {
+            link["synthesis_id"] for link in self._synthesis_facts if link["fact_id"] in fact_id_set
+        }
+        return [
+            {k: v for k, v in self._syntheses[eid].items() if k != "embedding"}
+            for eid in matched_synthesis_ids
+            if eid in self._syntheses and self._syntheses[eid].get("is_active", True)
+        ]
+
+    async def search_syntheses(
+        self,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        results = []
+        for ep in self._syntheses.values():
+            if ep.get("user_id") != user_id:
+                continue
+            if agent_id and ep.get("agent_id") != agent_id:
+                continue
+            if not ep.get("is_active", True):
+                continue
+            emb = ep.get("embedding")
+            if not emb:
+                continue
+            sim = _cosine_similarity(embedding, emb)
+            row = {k: v for k, v in ep.items() if k != "embedding"}
+            results.append({**row, "distance": 1.0 - sim})
+        results.sort(key=lambda x: x["distance"])
+        return results[:limit]
+
+    async def insert_fact_source(self, fact_id: str, sentence_id: str) -> None:
+        self._fact_sources.append({"fact_id": fact_id, "sentence_id": sentence_id})
+
+    async def get_source_sentences(self, fact_ids: list[str]) -> list[str]:
+        fact_id_set = set(fact_ids)
+        return list(
+            {link["sentence_id"] for link in self._fact_sources if link["fact_id"] in fact_id_set}
+        )
+
+    async def get_sentences_by_ids(self, sentence_ids: list[str]) -> list[dict[str, Any]]:
+        id_set = set(sentence_ids)
+        results = [
+            s for s in self._sentences.values() if s["id"] in id_set and s.get("is_active", True)
+        ]
+        return sorted(
+            results,
+            key=lambda x: (
+                x.get("session_id", ""),
+                x.get("turn_number", 0),
+                x.get("sentence_index", 0),
+            ),
+        )
+
+
     # ── Episodes ──
 
     async def insert_episode(
@@ -428,7 +616,7 @@ class MemoryBackend(StorageBackend):
 
     async def delete_user(self, user_id: str) -> int:
         count = 0
-        for store in [self._sentences, self._facts, self._episodes, self._sessions]:
+        for store in [self._sentences, self._facts, self._syntheses, self._syntheses, self._episodes, self._sessions]:
             keys = [k for k, v in store.items() if v.get("user_id") == user_id]
             for k in keys:
                 del store[k]

@@ -79,41 +79,37 @@ class Synthesizer:
         inserted = 0
 
         for fact_dict, emb in zip(new_facts, embeddings):
-            # Check dedup against existing synthesis facts
-            existing = await self.db.search_facts(
+            # Check dedup against existing synthesis
+            existing = await self.db.search_syntheses(
                 embedding=emb,
                 user_id=user_id,
                 agent_id=agent_id,
-                limit=1,
-                active_only=True
+                limit=1
             )
             
             skip = False
             if existing:
                 best = existing[0]
                 sim = 1.0 - best.get("distance", 1.0)
-                if sim > 0.85 and best.get("metadata", {}).get("source") == "synthesis":
-                    # We already have this synthesis fact, let's just update mentions
-                    await self.db.increment_fact_mentions(best["id"])
+                if sim > 0.85:
+                    # We already have this synthesis, let's just skip it
                     skip = True
                     
             if skip:
                 continue
                 
             try:
-                await self.db.insert_fact(
+                # Need to link the synthesis to the facts that generated it if we want graph traversal
+                # But for now we just insert it
+                synthesis_id = await self.db.insert_synthesis(
                     text=fact_dict["text"],
                     embedding=emb,
                     user_id=user_id,
                     agent_id=agent_id,
-                    session_id="synthesis", # Special session ID
-                    subject="user",
-                    confidence=fact_dict.get("confidence", 0.9),
-                    metadata={"source": "synthesis"},
-                    event_time=now
+                    session_id="synthesis"
                 )
                 inserted += 1
             except Exception as e:
-                logger.warning("Failed to insert synthesis fact: %s", e)
+                logger.warning("Failed to insert synthesis: %s", e)
                 
         return inserted
