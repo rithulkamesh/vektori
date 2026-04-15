@@ -18,9 +18,8 @@ async def test():
     
     n = await v.synthesize("u1")
     print("New synthesized facts:", n)
-    facts = await v.db.get_active_facts("u1", limit=100)
-    for f in facts:
-        if f.get("metadata", {}).get("source") == "synthesis":
-            print("Synthesized:", f["text"])
+    syntheses = await v.db.search_syntheses([0.1, 0.2], "u1", limit=100)
+    for s in syntheses:
+        print("Synthesized:", s["text"])
             
 asyncio.run(test())

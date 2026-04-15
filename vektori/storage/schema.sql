@@ -130,6 +130,41 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
 
 
 -- ============================================================
+-- ============================================================
+-- SYNTHESES: The middle layer (L1). LLM-generated episodic memory narratives.
+-- Discovered via graph traversal from matched facts, also directly vector-searched.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS syntheses (
+    id UUID PRIMARY KEY,
+    text TEXT NOT NULL,
+    embedding vector(1536),               -- for direct vector search at retrieval
+    user_id TEXT NOT NULL,
+    agent_id TEXT,
+    session_id TEXT,                       -- session this synthesis came from
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_syntheses_user ON syntheses (user_id);
+CREATE INDEX IF NOT EXISTS idx_syntheses_embedding ON syntheses
+    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- Dedup: same synthesis text for same user is idempotent
+CREATE UNIQUE INDEX IF NOT EXISTS idx_syntheses_user_text ON syntheses (user_id, text);
+
+
+-- ============================================================
+-- EPISODE_FACTS: Links syntheses (L1) to the facts (L0) they were derived from.
+-- Graph edge: traversed after L0 vector search to surface syntheses.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS synthesis_facts (
+    synthesis_id UUID NOT NULL REFERENCES syntheses(id) ON DELETE CASCADE,
+    fact_id UUID NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+    PRIMARY KEY (synthesis_id, fact_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_synthesis_facts_synthesis ON synthesis_facts (synthesis_id);
+CREATE INDEX IF NOT EXISTS idx_synthesis_facts_fact ON synthesis_facts (fact_id);
+
 -- EPISODES: The middle layer (L1). LLM-generated episodic memory narratives.
 -- Discovered via graph traversal from matched facts, also directly vector-searched.
 -- ============================================================

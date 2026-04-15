@@ -703,6 +703,12 @@ def _format_retrieved_context(search_results: Any) -> str:
         for i, ep in enumerate(episodes, 1):
             lines.append(f"{i}. {ep.get('text', str(ep))}")
 
+    syntheses = search_results.get("syntheses") or []
+    if syntheses:
+        lines.append("\n## Syntheses")
+        for i, sy in enumerate(syntheses, 1):
+            lines.append(f"{i}. {sy.get('text', str(sy))}")
+
     sentences = search_results.get("sentences") or []
     if sentences:
         session_sents: dict[str, list[dict[str, Any]]] = {}
