@@ -49,11 +49,13 @@ def build_qa_prompt(
     *,
     question_date: str = "",
     question_type: str = "",
+    prompt_template: str | None = None,
 ) -> str:
     """Build the QA prompt used by memory benchmark answer generation."""
     date_line = f"TODAY'S DATE: {question_date}\n\n" if question_date else ""
     type_line = f"QUESTION TYPE: {question_type}\n" if question_type else ""
-    return QA_PROMPT.format(
+    template = prompt_template or QA_PROMPT
+    return template.format(
         date_line=f"{date_line}{type_line}",
         context=context,
         question=question,
@@ -68,6 +70,7 @@ async def generate_answer(
     question_type: str = "",
     llm: SupportsGenerate | None = None,
     model: str | None = None,
+    prompt_template: str | None = None,
     max_tokens: int = 500,
 ) -> str:
     """Generate an answer from retrieved context using the shared QA prompt."""
@@ -86,6 +89,7 @@ async def generate_answer(
         context,
         question_date=question_date,
         question_type=question_type,
+        prompt_template=prompt_template,
     )
     try:
         return (await llm.generate(prompt, max_tokens=max_tokens)).strip()

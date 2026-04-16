@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from benchmarks.locomo.locomo_runner import LoCoMoConfig, _format_retrieved_context, _parse_date
+import pytest
+
+from benchmarks.locomo.locomo_runner import (
+    LoCoMoBenchmark,
+    LoCoMoConfig,
+    _format_retrieved_context,
+    _load_qa_prompt_override,
+    _parse_date,
+)
 from vektori.qa import build_qa_prompt, generate_answer
 
 
@@ -89,3 +97,25 @@ def test_format_retrieved_context_ranks_facts_and_annotates_relative_time():
     assert "[2023-05-08]" in lines[1]
     assert '"yesterday" resolves to 2023-05-07' in lines[1]
     assert "User likes tea." in lines[2]
+
+
+def test_load_qa_prompt_override_validates_placeholders(tmp_path):
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("{date_line}{context}{question}", encoding="utf-8")
+
+    assert _load_qa_prompt_override(str(prompt_path)) == "{date_line}{context}{question}"
+
+    bad_path = tmp_path / "bad.txt"
+    bad_path.write_text("{context}{question}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="date_line"):
+        _load_qa_prompt_override(str(bad_path))
+
+
+def test_locomo_runner_keeps_prompt_override_on_instance(tmp_path):
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("{date_line}{context}{question}", encoding="utf-8")
+
+    runner = LoCoMoBenchmark(LoCoMoConfig(qa_prompt_path=str(prompt_path)))
+
+    assert runner._qa_prompt_override == "{date_line}{context}{question}"
