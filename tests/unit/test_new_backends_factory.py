@@ -38,6 +38,8 @@ async def test_factory_veclite_by_key():
     with patch.object(VecLiteBackend, "initialize", new_callable=AsyncMock):
         backend = await create_storage(cfg)
     assert isinstance(backend, VecLiteBackend)
+
+
 async def test_factory_milvus_by_key():
     cfg = VektoriConfig(storage_backend="milvus", embedding_dimension=1536)
     with patch.object(MilvusBackend, "initialize", new_callable=AsyncMock):
@@ -95,6 +97,11 @@ async def test_factory_veclite_by_url(url):
         backend = await create_storage(cfg)
     assert isinstance(backend, VecLiteBackend)
     assert backend.base_path == url.replace("veclite://", "")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
         "http://localhost:19530",
         "http://milvus-host:19530",
     ],
