@@ -134,16 +134,35 @@ class SQLiteBackend(StorageBackend):
                 UNIQUE (user_id, text)
             );
 
+            CREATE TABLE IF NOT EXISTS syntheses (
+                id TEXT PRIMARY KEY,
+                text TEXT NOT NULL,
+                embedding TEXT,            -- JSON array of floats
+                user_id TEXT NOT NULL,
+                agent_id TEXT,
+                session_id TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now')),
+                UNIQUE (user_id, agent_id, text)
+            );
+
             CREATE TABLE IF NOT EXISTS episode_facts (
                 episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
                 fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
                 PRIMARY KEY (episode_id, fact_id)
             );
 
+            CREATE TABLE IF NOT EXISTS synthesis_facts (
+                synthesis_id TEXT NOT NULL REFERENCES syntheses(id) ON DELETE CASCADE,
+                fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+                PRIMARY KEY (synthesis_id, fact_id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_facts_user ON facts (user_id);
             CREATE INDEX IF NOT EXISTS idx_facts_active ON facts (user_id, is_active);
             CREATE INDEX IF NOT EXISTS idx_fact_sources_fact ON fact_sources (fact_id);
             CREATE INDEX IF NOT EXISTS idx_episode_facts_fact ON episode_facts (fact_id);
+            CREATE INDEX IF NOT EXISTS idx_synthesis_facts_fact ON synthesis_facts (fact_id);
         """)
 
     async def _migrate(self) -> None:
@@ -156,6 +175,27 @@ class SQLiteBackend(StorageBackend):
             await self._conn.execute("ALTER TABLE facts ADD COLUMN subject TEXT")
         if "mentions" not in cols:
             await self._conn.execute("ALTER TABLE facts ADD COLUMN mentions INTEGER DEFAULT 1")
+
+        async with self._conn.execute("PRAGMA foreign_key_list(synthesis_facts)") as cursor:
+            fk_rows = await cursor.fetchall()
+        if any(row["table"] == "synthesiss" for row in fk_rows):
+            await self._conn.execute("ALTER TABLE synthesis_facts RENAME TO synthesis_facts_bad")
+            await self._conn.execute(
+                """
+                CREATE TABLE synthesis_facts (
+                    synthesis_id TEXT NOT NULL REFERENCES syntheses(id) ON DELETE CASCADE,
+                    fact_id TEXT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+                    PRIMARY KEY (synthesis_id, fact_id)
+                )
+                """
+            )
+            await self._conn.execute(
+                """
+                INSERT OR IGNORE INTO synthesis_facts (synthesis_id, fact_id)
+                SELECT synthesis_id, fact_id FROM synthesis_facts_bad
+                """
+            )
+            await self._conn.execute("DROP TABLE synthesis_facts_bad")
         if "event_time" not in cols:
             await self._conn.execute("ALTER TABLE facts ADD COLUMN event_time TEXT")
 
@@ -467,7 +507,92 @@ class SQLiteBackend(StorageBackend):
             rows = await cursor.fetchall()
         return [row[0] for row in rows]
 
-    # ── Episodes ──
+    # ── Syntheses ──
+
+    async def insert_synthesis(
+        self,
+        text: str,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> str:
+        scope = agent_id or ""
+        synthesis_id = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user_id}::{scope}::{text}"))
+        await self._conn.execute(
+            """INSERT OR IGNORE INTO syntheses (id, text, embedding, user_id, agent_id, session_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (synthesis_id, text, json.dumps(embedding), user_id, agent_id, session_id),
+        )
+        await self._conn.commit()
+        return synthesis_id
+
+    async def insert_synthesis_fact(self, synthesis_id: str, fact_id: str) -> None:
+        await self._conn.execute(
+            "INSERT OR IGNORE INTO synthesis_facts (synthesis_id, fact_id) VALUES (?, ?)",
+            (synthesis_id, fact_id),
+        )
+        await self._conn.commit()
+
+    async def get_syntheses_for_facts(self, fact_ids: list[str]) -> list[dict[str, Any]]:
+        if not fact_ids:
+            return []
+        placeholders = ",".join("?" * len(fact_ids))
+        async with self._conn.execute(
+            f"""SELECT DISTINCT e.id, e.text, e.session_id, e.created_at
+                FROM syntheses e
+                JOIN synthesis_facts ef2 ON e.id = ef2.synthesis_id
+                WHERE ef2.fact_id IN ({placeholders}) AND e.is_active = 1""",
+            fact_ids,
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def search_syntheses(
+        self,
+        embedding: list[float],
+        user_id: str,
+        agent_id: str | None = None,
+        limit: int = 5,
+        threshold: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT id, text, session_id, embedding, created_at FROM syntheses WHERE user_id = ? AND is_active = 1"
+        params: list[Any] = [user_id]
+        if agent_id:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        async with self._conn.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+        results = []
+        for row in rows:
+            row_dict = dict(row)
+            emb = json.loads(row_dict.pop("embedding") or "null")
+            if emb:
+                sim = _cosine_similarity(embedding, emb)
+                if sim < threshold:
+                    continue
+                results.append({**row_dict, "distance": 1.0 - sim})
+        results.sort(key=lambda x: x["distance"])
+        return results[:limit]
+
+    async def get_sentences_by_ids(self, sentence_ids: list[str]) -> list[dict[str, Any]]:
+        if not sentence_ids:
+            return []
+        placeholders = ",".join("?" * len(sentence_ids))
+        async with self._conn.execute(
+            f"""
+            SELECT id, text, session_id, turn_number, sentence_index, role, created_at
+            FROM sentences
+            WHERE id IN ({placeholders}) AND is_active = 1
+            ORDER BY session_id, turn_number, sentence_index
+            """,
+            sentence_ids,
+        ) as cursor:
+            rows = await cursor.fetchall()
+            cols = [d[0] for d in cursor.description]
+        return [dict(zip(cols, row)) for row in rows]
+
+    # ── Syntheses ──
 
     async def insert_episode(
         self,
@@ -531,25 +656,6 @@ class SQLiteBackend(StorageBackend):
         results.sort(key=lambda x: x["distance"])
         return results[:limit]
 
-    async def get_sentences_by_ids(self, sentence_ids: list[str]) -> list[dict[str, Any]]:
-        if not sentence_ids:
-            return []
-        placeholders = ",".join("?" * len(sentence_ids))
-        async with self._conn.execute(
-            f"""
-            SELECT id, text, session_id, turn_number, sentence_index, role, created_at
-            FROM sentences
-            WHERE id IN ({placeholders}) AND is_active = 1
-            ORDER BY session_id, turn_number, sentence_index
-            """,
-            sentence_ids,
-        ) as cursor:
-            rows = await cursor.fetchall()
-            cols = [d[0] for d in cursor.description]
-        return [dict(zip(cols, row)) for row in rows]
-
-    # ── Sessions ──
-
     async def upsert_session(
         self,
         session_id: str,
@@ -606,7 +712,7 @@ class SQLiteBackend(StorageBackend):
 
     async def delete_user(self, user_id: str) -> int:
         count = 0
-        for table in ["sentences", "facts", "episodes", "sessions"]:
+        for table in ["sentences", "facts", "episodes", "syntheses", "sessions"]:
             async with self._conn.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE user_id = ?", (user_id,)
             ) as cursor:
