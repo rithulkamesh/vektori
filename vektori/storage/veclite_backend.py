@@ -99,7 +99,14 @@ class VecLiteBackend(StorageBackend):
 
     async def close(self) -> None:
         # No need to dump everything to JSON anymore. VecLite persists synchronously!
-        pass
+        if hasattr(self, "_vec_sentences"):
+            del self._vec_sentences
+        if hasattr(self, "_vec_facts"):
+            del self._vec_facts
+        if hasattr(self, "_vec_episodes"):
+            del self._vec_episodes
+        if hasattr(self, "_vec_relations"):
+            del self._vec_relations
 
     # ── Sentences ──
 
@@ -323,7 +330,12 @@ class VecLiteBackend(StorageBackend):
         agent_id: str | None = None,
     ) -> dict[str, Any] | None:
         for f in self._facts.values():
-            if f.get("user_id") == user_id and f.get("text") == text and f.get("is_active", True):
+            if (
+                f.get("user_id") == user_id
+                and f.get("text") == text
+                and f.get("is_active", True)
+                and (agent_id is None or f.get("agent_id") == agent_id)
+            ):
                 return f
         return None
 
@@ -589,6 +601,7 @@ class VecLiteBackend(StorageBackend):
             fact_set = set(fact_ids)
             ep_set = set(episode_ids)
 
+            to_delete = []
             for rid, meta_str in self._vec_relations.get_all():
                 if not meta_str:
                     continue
@@ -599,12 +612,15 @@ class VecLiteBackend(StorageBackend):
 
                 if rid.startswith("edge:"):
                     if data.get("source") in sent_set or data.get("target") in sent_set:
-                        self._vec_relations.delete(rid)
+                        to_delete.append(rid)
                 elif rid.startswith("fs:"):
                     if data.get("fact_id") in fact_set or data.get("sentence_id") in sent_set:
-                        self._vec_relations.delete(rid)
+                        to_delete.append(rid)
                 elif rid.startswith("ef:"):
                     if data.get("episode_id") in ep_set or data.get("fact_id") in fact_set:
-                        self._vec_relations.delete(rid)
+                        to_delete.append(rid)
+
+            for rid in to_delete:
+                self._vec_relations.delete(rid)
 
         return count
