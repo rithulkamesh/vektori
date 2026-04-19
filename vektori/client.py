@@ -254,7 +254,6 @@ class Vektori:
             The number of documents/records successfully ingested.
         """
         return await connector.ingest(user_id=user_id, vektori=self, since=since)
-
     async def synthesize(self, user_id: str, agent_id: str | None = None) -> int:
         """
         Run a cross-session synthesis pass for the user.
